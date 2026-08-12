@@ -21,8 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Teams session cards now leave the running state when a turn ends** — teardown removes and
   unregisters the Stop action, then flushes the final card repaint so the completed or error status
   is visible immediately instead of leaving a stale working card behind.
-- **CLI sync respects its ten-session batch size** — combined Claude and Codex discovery now stops
-  at ten sessions total, and imported thread names remain within Discord's 100-character limit
+- **CLI sync uses a configurable batch maximum** — combined Claude and Codex discovery now
+  defaults to ten sessions total, can be changed with `/sync-settings`, and keeps imported thread
+  names within Discord's 100-character limit
   after their prefix is added.
 
 ## [4.0.0] - 2026-08-11

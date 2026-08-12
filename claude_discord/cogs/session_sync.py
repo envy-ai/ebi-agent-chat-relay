@@ -130,6 +130,7 @@ async def sync_cli_sessions(
     thread_style: str,
     since_hours: int,
     min_results: int,
+    limit: int = 10,
     codex_sessions_path: str | None = None,
     backend_settings: BackendSettings | None = None,
 ) -> SyncResult:
@@ -144,6 +145,7 @@ async def sync_cli_sessions(
         codex_sessions_path=codex_sessions_path,
         since_hours=since_hours,
         min_results=min_results,
+        limit=limit,
     )
 
     imported = 0

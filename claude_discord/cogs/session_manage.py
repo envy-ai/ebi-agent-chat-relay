@@ -60,6 +60,8 @@ SETTING_SYNC_SINCE_HOURS = "sync_since_hours"
 _DEFAULT_SINCE_HOURS = 24
 SETTING_SYNC_MIN_RESULTS = "sync_min_results"
 _DEFAULT_MIN_RESULTS = 10
+SETTING_SYNC_MAX_RESULTS = "sync_max_results"
+_DEFAULT_MAX_RESULTS = 10
 
 # Legacy model/effort setting keys.
 #
@@ -220,6 +222,15 @@ class SessionManageCog(commands.Cog):
             return int(raw)
         return _DEFAULT_MIN_RESULTS
 
+    async def _get_max_results(self) -> int:
+        """Get the configured sync batch maximum, defaulting to 10."""
+        if self.settings_repo is None:
+            return _DEFAULT_MAX_RESULTS
+        raw = await self.settings_repo.get(SETTING_SYNC_MAX_RESULTS)
+        if raw is not None and raw.isdigit() and int(raw) > 0:
+            return int(raw)
+        return _DEFAULT_MAX_RESULTS
+
     def _get_runner(self) -> object | None:
         """Return the runner, resolving it from ClaudeChatCog if not set directly."""
         if self._runner is not None:
@@ -338,6 +349,7 @@ class SessionManageCog(commands.Cog):
         thread_style="How synced sessions appear in Discord",
         since_hours="Sync sessions active within the last N hours (default: 24)",
         min_results="Minimum sessions to sync even if outside time window (default: 10)",
+        max_results="Maximum sessions to consider per sync run (default: 10)",
     )
     @app_commands.choices(thread_style=_STYLE_CHOICES)
     async def sync_settings(
@@ -346,11 +358,13 @@ class SessionManageCog(commands.Cog):
         thread_style: str | None = None,
         since_hours: int | None = None,
         min_results: int | None = None,
+        max_results: int | None = None,
     ) -> None:
         """View or change sync settings. Without arguments, shows current settings."""
         current_style = await self._get_thread_style()
         current_hours = await self._get_since_hours()
         current_min = await self._get_min_results()
+        current_max = await self._get_max_results()
         updated = False
 
         if thread_style is not None and thread_style in _VALID_THREAD_STYLES:
@@ -369,6 +383,12 @@ class SessionManageCog(commands.Cog):
             if self.settings_repo is not None:
                 await self.settings_repo.set(SETTING_SYNC_MIN_RESULTS, str(min_results))
             current_min = min_results
+            updated = True
+
+        if max_results is not None and max_results > 0:
+            if self.settings_repo is not None:
+                await self.settings_repo.set(SETTING_SYNC_MAX_RESULTS, str(max_results))
+            current_max = max_results
             updated = True
 
         style_desc = {
@@ -391,9 +411,14 @@ class SessionManageCog(commands.Cog):
 
         min_desc = (
             f"\U0001f4ca **{current_min}** — if fewer than {current_min} sessions "
-            f"match the time filter, fill up to {current_min} from most recent"
+            f"match the time filter, fill toward {current_min} from most recent "
+            "(subject to the maximum below)"
             if current_min > 0
             else "\U0001f4ca **No minimum** — strict time filter only"
+        )
+
+        max_desc = (
+            f"\U0001f6d1 **{current_max}** — consider at most {current_max} sessions per sync run"
         )
 
         embed = discord.Embed(
@@ -404,12 +429,14 @@ class SessionManageCog(commands.Cog):
                 f"**Since hours**: {current_hours}\n"
                 f"{hours_desc}\n\n"
                 f"**Min results**: {current_min}\n"
-                f"{min_desc}"
+                f"{min_desc}\n\n"
+                f"**Max results**: {current_max}\n"
+                f"{max_desc}"
             ),
             color=COLOR_SUCCESS if updated else COLOR_INFO,
         )
         if updated:
-            embed.set_footer(text="Setting updated! New syncs will use this style.")
+            embed.set_footer(text="Setting updated! New syncs will use these settings.")
 
         await interaction.response.send_message(embed=embed)
 
@@ -633,6 +660,7 @@ class SessionManageCog(commands.Cog):
         thread_style = await self._get_thread_style()
         since_hours = await self._get_since_hours()
         min_results = await self._get_min_results()
+        max_results = await self._get_max_results()
 
         raw_channel = self.bot.get_channel(self.bot.channel_id)
 
@@ -654,6 +682,7 @@ class SessionManageCog(commands.Cog):
             thread_style=thread_style,
             since_hours=since_hours,
             min_results=min_results,
+            limit=max_results,
             codex_sessions_path=self.codex_sessions_path,
             backend_settings=self.backend_settings,
         )

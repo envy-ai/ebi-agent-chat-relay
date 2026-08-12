@@ -103,6 +103,27 @@ class TestSyncSettings:
         assert embed is not None
         assert "message" in embed.description.lower()
 
+    async def test_shows_default_max_results_ten(self):
+        """The batch maximum defaults to 10 when no setting is stored."""
+        cog = _make_cog()
+        interaction = _make_interaction()
+
+        await cog.sync_settings.callback(cog, interaction)
+
+        embed = interaction.response.send_message.call_args.kwargs["embed"]
+        assert "**Max results**: 10" in embed.description
+
+    async def test_updates_max_results(self):
+        """A positive maximum is persisted for future sync runs."""
+        cog = _make_cog()
+        interaction = _make_interaction()
+
+        await cog.sync_settings.callback(cog, interaction, max_results=25)
+
+        cog.settings_repo.set.assert_awaited_once_with("sync_max_results", "25")
+        embed = interaction.response.send_message.call_args.kwargs["embed"]
+        assert "**Max results**: 25" in embed.description
+
 
 class TestSyncThreadStyleChannel:
     """Test that sync_sessions uses channel threads when style is 'channel'."""
@@ -174,6 +195,43 @@ class TestSyncThreadStyleChannel:
         summary_msg.create_thread.assert_called_once()
         # channel.create_thread should NOT be called directly
         channel.create_thread.assert_not_called()
+
+    async def test_configured_max_results_limits_sync_batch(self, tmp_path):
+        """The persisted maximum limits the number of sessions considered."""
+        import json
+
+        for index in range(4):
+            session_id = f"{index + 1:08d}-1234-5678-9abc-def012345678"
+            jsonl_path = tmp_path / f"{session_id}.jsonl"
+            with open(jsonl_path, "w") as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "isMeta": False,
+                            "sessionId": session_id,
+                            "cwd": f"/home/user/project-{index}",
+                            "timestamp": f"2026-02-19T1{index}:00:00.000Z",
+                            "message": {"role": "user", "content": f"Task {index}"},
+                        }
+                    )
+                    + "\n"
+                )
+
+        cog = _make_cog(cli_sessions_path=str(tmp_path))
+
+        async def get_setting(key: str) -> str | None:
+            if key == "sync_max_results":
+                return "2"
+            return None
+
+        cog.settings_repo.get = AsyncMock(side_effect=get_setting)
+        interaction = _make_interaction()
+
+        await cog.sync_sessions.callback(cog, interaction)
+
+        channel = cog.bot.get_channel(999)
+        assert channel.create_thread.await_count == 2
 
 
 class TestSyncThreadNames:
