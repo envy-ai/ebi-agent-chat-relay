@@ -19,6 +19,7 @@ from dotenv import find_dotenv, load_dotenv
 from .bot import ClaudeDiscordBot
 from .cog_loader import load_custom_cogs
 from .deployment import DataLayout
+from .discord_ui.thread_dashboard import DEFAULT_WAITING_INPUT_MESSAGE
 from .setup import setup_bridge
 from .teams_integration import FrontendRouter, build_teams_runtime, parse_frontends
 from .utils.logger import setup_logging
@@ -75,6 +76,10 @@ def load_config() -> dict[str, str]:
         "max_concurrent": os.getenv("MAX_CONCURRENT_SESSIONS", "3"),
         "timeout": os.getenv("SESSION_TIMEOUT_SECONDS", "300"),
         "owner_id": os.getenv("DISCORD_OWNER_ID", ""),
+        "waiting_input_message": os.getenv(
+            "CCDB_WAITING_INPUT_MESSAGE",
+            DEFAULT_WAITING_INPUT_MESSAGE,
+        ),
         "channel_ids": _env("CCDB_CHANNEL_IDS", "CLAUDE_CHANNEL_IDS", ""),
         "monitor_all_channels": _env(
             "CCDB_MONITOR_ALL_CHANNELS", "CLAUDE_MONITOR_ALL_CHANNELS", "false"
@@ -138,6 +143,7 @@ async def main() -> None:
     bot = ClaudeDiscordBot(
         channel_id=channel_id,
         owner_id=owner_id,
+        waiting_input_message=config["waiting_input_message"],
     )
 
     # Optional API server

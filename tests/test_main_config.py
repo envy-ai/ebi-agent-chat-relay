@@ -72,6 +72,9 @@ class TestLoadConfig:
         assert config["backend"] == "claude"  # CCDB_BACKEND default
         assert config["max_concurrent"] == "3"
         assert config["timeout"] == "300"
+        assert config["waiting_input_message"] == (
+            "🟡 <@{owner_id}> Codex has finished — your reply is needed here."
+        )
         assert config["custom_cogs_dir"] == ""
         assert config["frontends"] == "discord"
 
@@ -154,6 +157,26 @@ class TestLoadConfig:
         assert config["allowed_tools"] == "Read,Write"
         assert config["custom_cogs_dir"] == "/my/cogs"
         assert config["cli_sessions_path"] == "~/.claude/projects"
+
+    def test_waiting_input_message_is_configurable(self) -> None:
+        """The full owner notification text comes from CCDB_WAITING_INPUT_MESSAGE."""
+        from claude_discord.main import load_config
+
+        with (
+            patch("claude_discord.main.load_dotenv"),
+            patch.dict(
+                "os.environ",
+                {
+                    "DISCORD_BOT_TOKEN": "tok",
+                    "DISCORD_CHANNEL_ID": "111",
+                    "CCDB_WAITING_INPUT_MESSAGE": "<@{owner_id}> Codex needs you.",
+                },
+                clear=True,
+            ),
+        ):
+            config = load_config()
+
+        assert config["waiting_input_message"] == "<@{owner_id}> Codex needs you."
 
     def test_cli_sessions_path_defaults_to_empty(self) -> None:
         """CLI_SESSIONS_PATH defaults to empty string when not set."""

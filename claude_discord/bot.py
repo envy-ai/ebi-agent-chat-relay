@@ -13,6 +13,7 @@ from .collision import FileActivityTracker
 from .concurrency import SessionRegistry
 from .discord_ui.ask_bus import ask_bus
 from .discord_ui.ask_view import AskView
+from .discord_ui.thread_dashboard import DEFAULT_WAITING_INPUT_MESSAGE
 
 if TYPE_CHECKING:
     from .database.ask_repo import PendingAskRepository
@@ -31,6 +32,7 @@ class ClaudeDiscordBot(commands.Bot):
         self,
         channel_id: int,
         owner_id: int | None = None,
+        waiting_input_message: str = DEFAULT_WAITING_INPUT_MESSAGE,
         ask_repo: PendingAskRepository | None = None,
         lounge_repo: LoungeRepository | None = None,
         lounge_channel_id: int | None = None,
@@ -46,6 +48,7 @@ class ClaudeDiscordBot(commands.Bot):
         )
         self.channel_id = channel_id
         self.owner_id = owner_id
+        self.waiting_input_message = waiting_input_message
         self.session_registry = SessionRegistry()
         # Which files each live session writes — CollisionWatchCog compares
         # these to spot two sessions editing the same file.
@@ -79,6 +82,7 @@ class ClaudeDiscordBot(commands.Bot):
             self.thread_dashboard = ThreadStatusDashboard(
                 channel=channel,
                 owner_id=self.owner_id,
+                waiting_input_message=self.waiting_input_message,
             )
             await self.thread_dashboard.initialize()
             logger.info("Thread status dashboard initialised in channel %d", self.channel_id)

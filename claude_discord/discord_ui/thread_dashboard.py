@@ -47,6 +47,8 @@ _STATE_LABEL: dict[str, str] = {
 # Keeps the embed from accumulating stale entries after a long idle period.
 _STALE_HOURS = 4
 
+DEFAULT_WAITING_INPUT_MESSAGE = "🟡 <@{owner_id}> Codex has finished — your reply is needed here."
+
 
 class ThreadState(str, Enum):  # noqa: UP042 — requires-python = ">=3.10", StrEnum is 3.11+
     """Lifecycle state of a Claude Code session thread."""
@@ -86,9 +88,11 @@ class ThreadStatusDashboard:
         self,
         channel: discord.TextChannel,
         owner_id: int | None = None,
+        waiting_input_message: str = DEFAULT_WAITING_INPUT_MESSAGE,
     ) -> None:
         self._channel = channel
         self._owner_id = owner_id
+        self._waiting_input_message = waiting_input_message
         self._threads: dict[int, _ThreadInfo] = {}
         self._dashboard_message: discord.Message | None = None
         self._lock = asyncio.Lock()
@@ -158,9 +162,8 @@ class ThreadStatusDashboard:
         # Send mention outside the lock to avoid holding it during an HTTP call
         if should_mention and thread is not None:
             try:
-                await thread.send(
-                    f"🟡 <@{self._owner_id}> Claude has finished — your reply is needed here."
-                )
+                message = self._waiting_input_message.replace("{owner_id}", str(self._owner_id))
+                await thread.send(message)
             except (discord.HTTPException, RuntimeError):
                 logger.debug("Failed to send owner mention in thread %d", thread_id, exc_info=True)
 

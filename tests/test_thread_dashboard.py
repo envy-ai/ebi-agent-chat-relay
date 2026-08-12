@@ -13,6 +13,7 @@ import pytest
 
 from claude_discord.discord_ui.thread_dashboard import (
     _STALE_HOURS,
+    DEFAULT_WAITING_INPUT_MESSAGE,
     ThreadState,
     ThreadStatusDashboard,
     _ThreadInfo,
@@ -42,10 +43,15 @@ def _make_thread(thread_id: int = 111) -> MagicMock:
 
 def _make_dashboard(
     owner_id: int | None = None,
+    waiting_input_message: str = DEFAULT_WAITING_INPUT_MESSAGE,
 ) -> tuple[ThreadStatusDashboard, MagicMock]:
     """Return a (dashboard, channel) pair ready for testing."""
     channel = _make_channel()
-    dashboard = ThreadStatusDashboard(channel=channel, owner_id=owner_id)
+    dashboard = ThreadStatusDashboard(
+        channel=channel,
+        owner_id=owner_id,
+        waiting_input_message=waiting_input_message,
+    )
     return dashboard, channel
 
 
@@ -142,6 +148,21 @@ class TestOwnerMention:
         thread.send.assert_called_once()
         sent_text = thread.send.call_args.args[0]
         assert "<@42>" in sent_text
+        assert "Codex has finished" in sent_text
+
+    @pytest.mark.asyncio
+    async def test_mention_uses_configured_message(self) -> None:
+        dashboard, _ = _make_dashboard(
+            owner_id=42,
+            waiting_input_message="<@{owner_id}> Please continue with the agent.",
+        )
+        await dashboard.initialize()
+        thread = _make_thread(10)
+
+        await dashboard.set_state(10, ThreadState.PROCESSING, "working", thread=thread)
+        await dashboard.set_state(10, ThreadState.WAITING_INPUT, "working", thread=thread)
+
+        thread.send.assert_called_once_with("<@42> Please continue with the agent.")
 
     @pytest.mark.asyncio
     async def test_mention_not_sent_if_already_waiting(self) -> None:
