@@ -133,7 +133,7 @@ def scan_all_cli_sessions(
     *,
     claude_sessions_path: str | None,
     codex_sessions_path: str | None,
-    limit: int = 50,
+    limit: int = 10,
     max_lines_per_file: int = 20,
     since_hours: int = 0,
     min_results: int = 0,

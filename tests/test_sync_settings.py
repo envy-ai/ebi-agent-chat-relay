@@ -174,3 +174,25 @@ class TestSyncThreadStyleChannel:
         summary_msg.create_thread.assert_called_once()
         # channel.create_thread should NOT be called directly
         channel.create_thread.assert_not_called()
+
+
+class TestSyncThreadNames:
+    """Discord's 100-character limit includes the imported-session prefix."""
+
+    async def test_channel_thread_name_including_prefix_is_at_most_100_characters(self):
+        from claude_discord.cogs.session_sync import create_sync_thread
+        from claude_discord.session_sync import CliSession
+
+        channel = MagicMock(spec=discord.TextChannel)
+        channel.create_thread = AsyncMock(return_value=MagicMock(spec=discord.Thread))
+        cli_session = CliSession(
+            session_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            working_dir=None,
+            summary="x" * 100,
+            timestamp=None,
+        )
+
+        await create_sync_thread(channel, cli_session, cli_session.summary or "", "channel")
+
+        name = channel.create_thread.call_args.kwargs["name"]
+        assert len(name) <= 100

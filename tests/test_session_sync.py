@@ -9,7 +9,12 @@ import pytest
 
 from claude_discord.database.models import init_db
 from claude_discord.database.repository import SessionRepository
-from claude_discord.session_sync import CliSession, extract_recent_messages, scan_cli_sessions
+from claude_discord.session_sync import (
+    CliSession,
+    extract_recent_messages,
+    scan_all_cli_sessions,
+    scan_cli_sessions,
+)
 
 
 @pytest.fixture
@@ -518,6 +523,51 @@ class TestScanCodexCliSessions:
         )
 
         assert scan_cli_sessions(str(tmp_path), backend="codex") == []
+
+
+class TestScanAllCliSessions:
+    """Test the combined Claude and Codex import candidate list."""
+
+    def test_default_limit_is_ten_total_across_backends(self, tmp_path):
+        claude_root = tmp_path / "claude"
+        codex_root = tmp_path / "codex"
+        claude_root.mkdir()
+
+        for index in range(6):
+            session_id = f"aaaaaaaa-aaaa-aaaa-aaaa-{index:012d}"
+            _write_session_jsonl(
+                claude_root / f"{session_id}.jsonl",
+                session_id,
+                [
+                    {
+                        "type": "user",
+                        "cwd": "/home/user/claude-project",
+                        "timestamp": f"2026-08-12T13:00:{index:02d}.000Z",
+                        "message": {"content": f"Claude task {index}"},
+                    }
+                ],
+            )
+
+        for index in range(6):
+            session_id = f"bbbbbbbb-bbbb-bbbb-bbbb-{index:012d}"
+            _write_codex_session_jsonl(
+                codex_root,
+                session_id,
+                [
+                    {
+                        "timestamp": f"2026-08-12T14:00:{index:02d}.000Z",
+                        "type": "event_msg",
+                        "payload": {"type": "user_message", "message": f"Codex task {index}"},
+                    }
+                ],
+            )
+
+        sessions = scan_all_cli_sessions(
+            claude_sessions_path=str(claude_root),
+            codex_sessions_path=str(codex_root),
+        )
+
+        assert len(sessions) == 10
 
 
 class TestScanSinceDays:

@@ -72,11 +72,11 @@ async def create_sync_thread(
         embed.set_footer(text=f"Session: {cli_session.session_id[:8]}...")
 
         summary_msg = await channel.send(embed=embed)
-        return await summary_msg.create_thread(name=f"\U0001f5a5 {thread_name}")
+        return await summary_msg.create_thread(name=f"\U0001f5a5 {thread_name}"[:100])
 
     # Default: channel thread
     return await channel.create_thread(
-        name=f"\U0001f5a5 {thread_name}",
+        name=f"\U0001f5a5 {thread_name}"[:100],
         type=discord.ChannelType.public_thread,
     )
 
