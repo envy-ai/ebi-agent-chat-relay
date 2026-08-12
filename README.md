@@ -480,7 +480,7 @@ Behind the scenes:
 
 ### Session Management
 - **Built-in help** — `/help` shows all available slash commands and basic usage (ephemeral, only visible to the caller)
-- **Session sync** — Import CLI sessions as Discord threads (`/sync-sessions`); `/sync-settings` to view or change sync preferences (thread style, time window, minimum results)
+- **Session sync** — Import Claude Code and Codex CLI sessions as Discord threads (`/sync-sessions`). Both native stores are discovered automatically (`~/.claude/projects` and `$CODEX_HOME/sessions`, normally `~/.codex/sessions`); `/sync-settings` changes thread style, time window, and minimum results
 - **Session list** — `/sessions` with filtering by origin (Discord / CLI / all) and time window
 - **Thread search** — `/search <query>` finds a past thread by keyword, matching the persistent per-thread summary (the opening prompt) and working directory; renders hits as a scannable embed with a Discord deep-link that reopens even an archived (sidebar-hidden) thread; optional `origin` filter (Discord / CLI). Add `body:True` to also grep the full local Claude transcripts (`~/.claude/projects`), so keywords that appear only mid-conversation are found too — each body hit shows the matching snippet with a `💬` badge, and a transcript with no Discord thread offers a `claude --resume <id>` hint instead of a link. The same lookup is exposed as `GET /api/search` (add `body=1`) for other sessions and skills. No AI tokens — a `LIKE` query over data ccdb already keeps, plus a safe `grep` (never `shell=True`) over the transcripts on disk
 - **Session resume** — `/resume` shows a select menu of recent sessions (up to 25) and resumes the selected one in a new thread; optional `query` parameter for keyword search (matches summary and working directory); optional `filter=orphaned` to show only sessions from deleted threads; works from any channel or thread — always creates a new thread in the configured main channel
@@ -853,6 +853,7 @@ In chat-only mode, permission requests and `AskUserQuestion` prompts are **alway
 | `CCDB_COMMAND` | Path or name of the CLI binary (overrides `CLAUDE_COMMAND`). Used by the initial runner picked from `CCDB_BACKEND`; superseded by the two per-backend variables below when `/backend` switches at runtime. | _(auto: `claude` or `codex`)_ |
 | `CCDB_CLAUDE_COMMAND` | Explicit path to the Claude CLI binary. Used by `BackendFactory` whenever `/backend claude` is active, regardless of the initial `CCDB_BACKEND`. Falls back to `CLAUDE_COMMAND`, then `claude` (PATH). | (optional) |
 | `CCDB_CODEX_COMMAND` | Explicit path to the OpenAI Codex CLI binary. Required when running the bot under systemd (default service PATH does not include `~/.npm-global/bin`). Falls back to `codex` (PATH). | (optional) |
+| `CODEX_HOME` | Codex CLI home. `/sync-sessions` discovers Codex rollouts in its `sessions` directory. | `~/.codex` |
 | `CCDB_AGUI_URL` | Exact HTTP(S) run endpoint for `/backend agui`. Redirects are rejected. | (required for `agui`) |
 | `CCDB_AGUI_TOKEN` | Optional bearer token for the AG-UI endpoint. Stripped from Claude/Codex subprocess environments. | (optional) |
 | `PATH` | Binary search path for the bot **and every CLI session it spawns** — sessions inherit the bot's environment. Set it in `.env` when running under systemd, which starts units with a minimal PATH and never reads `~/.bashrc` / `~/.profile`. See [Toolchain PATH](#toolchain-path--set-it-in-env). | (inherited from the parent process) |
@@ -880,7 +881,7 @@ In chat-only mode, permission requests and `AskUserQuestion` prompts are **alway
 | `INLINE_REPLY_CHANNEL_IDS` | Comma-separated channel IDs where the bot replies inline (no thread created) | (optional) |
 | `CHAT_ONLY_CHANNEL_IDS` | Comma-separated channel IDs in chat-only mode — only Claude's text responses are shown; all technical embeds (tools, thinking, session info, todos) are hidden | (optional) |
 | `WORKTREE_BASE_DIR` | Base directory to scan for session worktrees (enables automatic cleanup) | (optional) |
-| `CLI_SESSIONS_PATH` | Path to `~/.claude/projects` for CLI session discovery (enables `/sync-sessions`) and transcript body search (`/search body:True`, `GET /api/search?body=1`). Defaults to the standard `~/.claude/projects`, so body search stays Zero-Config wherever Claude Code has run | (optional) |
+| `CLI_SESSIONS_PATH` | Optional override for the Claude Code `~/.claude/projects` store used by `/sync-sessions` and transcript body search (`/search body:True`, `GET /api/search?body=1`). Codex sync separately follows `CODEX_HOME`; both defaults are zero-config. | `~/.claude/projects` |
 | `CUSTOM_COGS_DIR` | Directory containing custom Cog files to load at startup (see [Custom Cogs](#custom-cogs-extend-without-forking)) | (optional) |
 | `CLAUDE_ALLOWED_TOOLS` | Comma-separated list of allowed tools for Claude CLI (legacy — prefer `CCDB_ALLOWED_TOOLS`) | (optional) |
 | `CLAUDE_CHANNEL_IDS` | Additional channel IDs (comma-separated) for multi-channel setup (legacy — prefer `CCDB_CHANNEL_IDS`) | (optional) |

@@ -366,6 +366,7 @@ class ResumeSelectView(discord.ui.View):
             prompt="Resuming previous session. Continue from where we left off.",
             thread_name=thread_name,
             session_id=record.session_id,
+            backend=record.backend,
         )
 
         with contextlib.suppress(discord.HTTPException):

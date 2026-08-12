@@ -50,7 +50,9 @@ def _make_record(
 
 def _make_cog(
     cli_sessions_path: str | None = None,
+    codex_sessions_path: str | None = "/path/that/does/not/exist/codex-sessions",
     channel_id: int = 999,
+    backend_settings: MagicMock | None = None,
 ):
     from claude_discord.cogs.session_manage import SessionManageCog
 
@@ -69,22 +71,28 @@ def _make_cog(
     repo.save = AsyncMock(return_value=_make_record())
     repo.list_all = AsyncMock(return_value=[])
     repo.get_by_session_id = AsyncMock(return_value=None)
-    return SessionManageCog(bot=bot, repo=repo, cli_sessions_path=cli_sessions_path)
+    return SessionManageCog(
+        bot=bot,
+        repo=repo,
+        cli_sessions_path=cli_sessions_path,
+        codex_sessions_path=codex_sessions_path,
+        backend_settings=backend_settings,
+    )
 
 
 class TestSyncSessions:
     """Test /sync-sessions command."""
 
-    async def test_sync_no_path_configured(self):
-        cog = _make_cog(cli_sessions_path=None)
+    async def test_sync_uses_default_paths_when_not_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("CLI_SESSIONS_PATH", raising=False)
+        monkeypatch.delenv("CODEX_HOME", raising=False)
+        cog = _make_cog(cli_sessions_path=None, codex_sessions_path=None)
         interaction = _make_channel_interaction()
         await cog.sync_sessions.callback(cog, interaction)
-        call_args = interaction.response.send_message.call_args
-        assert call_args.kwargs.get("ephemeral") is True
-        assert (
-            "not configured" in str(call_args).lower()
-            or "not configured" in str(call_args.args).lower()
-        )
+        interaction.response.defer.assert_called_once()
+        embed = interaction.followup.send.call_args.kwargs["embed"]
+        assert "Found **0**" in embed.description
 
     async def test_sync_no_new_sessions(self, tmp_path):
         cog = _make_cog(cli_sessions_path=str(tmp_path))
@@ -131,6 +139,60 @@ class TestSyncSessions:
         save_kwargs = save_calls[0].kwargs
         assert save_kwargs["origin"] == "cli"
         assert save_kwargs["session_id"] == session_id
+        assert save_kwargs["backend"] == "claude"
+
+    async def test_sync_imports_codex_session_and_pins_backend(self, tmp_path):
+        claude_root = tmp_path / "claude"
+        claude_root.mkdir()
+        codex_root = tmp_path / "codex" / "2026" / "08" / "12"
+        codex_root.mkdir(parents=True)
+        session_id = "019ff751-0783-71f1-bd8b-82242475bd1d"
+        rollout = codex_root / f"rollout-2026-08-12T10-00-00-{session_id}.jsonl"
+        with open(rollout, "w") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "timestamp": "2026-08-12T14:00:00.000Z",
+                        "type": "session_meta",
+                        "payload": {
+                            "id": session_id,
+                            "timestamp": "2026-08-12T14:00:00.000Z",
+                            "cwd": "/home/user/codex-project",
+                            "source": "cli",
+                        },
+                    }
+                )
+                + "\n"
+            )
+            f.write(
+                json.dumps(
+                    {
+                        "timestamp": "2026-08-12T14:00:01.000Z",
+                        "type": "event_msg",
+                        "payload": {"type": "user_message", "message": "Use Codex from Discord"},
+                    }
+                )
+                + "\n"
+            )
+
+        backend_settings = MagicMock()
+        backend_settings.set_backend = AsyncMock()
+        cog = _make_cog(
+            cli_sessions_path=str(claude_root),
+            codex_sessions_path=str(tmp_path / "codex"),
+            backend_settings=backend_settings,
+        )
+        interaction = _make_channel_interaction()
+
+        await cog.sync_sessions.callback(cog, interaction)
+
+        save_kwargs = cog.repo.save.call_args.kwargs
+        assert save_kwargs["session_id"] == session_id
+        assert save_kwargs["backend"] == "codex"
+        backend_settings.set_backend.assert_awaited_once_with("codex", thread_id=50000)
+        thread = cog.bot.get_channel(999).create_thread.return_value
+        info_embed = thread.send.call_args_list[0].kwargs["embed"]
+        assert "Codex CLI" in info_embed.title
 
     async def test_sync_skips_already_known_sessions(self, tmp_path):
         session_id = "bbb22222-1234-5678-9abc-def012345678"

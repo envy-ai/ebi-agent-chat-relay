@@ -73,6 +73,7 @@ def _make_cog(
         bot=bot,
         repo=repo,
         cli_sessions_path=cli_sessions_path,
+        codex_sessions_path="/path/that/does/not/exist/codex-sessions",
         settings_repo=settings_repo,
     )
 

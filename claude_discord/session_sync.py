@@ -1,9 +1,4 @@
-"""CLI session scanner for syncing Claude Code sessions with Discord.
-
-Scans the Claude Code session storage directory (~/.claude/projects/)
-to discover sessions that were started from the CLI and could be
-synced as Discord threads.
-"""
+"""CLI session scanners for syncing Claude Code and Codex sessions with Discord."""
 
 from __future__ import annotations
 
@@ -13,11 +8,15 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-# UUID pattern for session JSONL files
+# Claude stores each session as ``<uuid>.jsonl``.
 _SESSION_FILE_PATTERN = re.compile(r"^[a-f0-9\-]{36}\.jsonl$")
+_SESSION_ID_PATTERN = re.compile(r"^[a-f0-9\-]+$")
+
+CliBackend = Literal["claude", "codex"]
 
 # Max summary length
 _MAX_SUMMARY_LEN = 100
@@ -34,24 +33,26 @@ class SessionMessage:
 
 @dataclass(frozen=True)
 class CliSession:
-    """A session discovered from Claude Code CLI storage."""
+    """A session discovered from a supported CLI's local storage."""
 
     session_id: str
     working_dir: str | None
     summary: str | None
     timestamp: str | None
+    backend: CliBackend = "claude"
 
 
 def scan_cli_sessions(
     base_path: str,
     *,
+    backend: CliBackend = "claude",
     limit: int = 50,
     max_lines_per_file: int = 20,
     since_days: int = 0,
     since_hours: int = 0,
     min_results: int = 0,
 ) -> list[CliSession]:
-    """Scan a Claude Code projects directory for sessions.
+    """Scan one supported CLI session directory.
 
     Supports two-tier filtering: first returns sessions modified within
     ``since_hours``.  If fewer than ``min_results`` are found, fills up
@@ -60,9 +61,8 @@ def scan_cli_sessions(
     prioritising recent activity.
 
     Args:
-        base_path: Path to scan. Can be a project directory (containing .jsonl
-                   files directly) or the parent ~/.claude/projects/ directory
-                   (containing project subdirectories).
+        base_path: Path to ``~/.claude/projects`` or ``~/.codex/sessions``.
+        backend: Transcript format stored under ``base_path``.
         limit: Maximum number of sessions to return. Files are sorted by
                modification time (newest first) and only the newest ``limit``
                files are parsed. Set to 0 for no limit.
@@ -84,15 +84,11 @@ def scan_cli_sessions(
     Returns:
         List of CliSession objects discovered, sorted by timestamp descending.
     """
-    base = Path(base_path)
+    base = Path(base_path).expanduser()
     if not base.is_dir():
         return []
 
-    # Collect all .jsonl files — either directly in base_path or in subdirectories
-    jsonl_files = list(base.glob("*.jsonl")) + list(base.glob("*/*.jsonl"))
-
-    # Filter to session files only
-    jsonl_files = [p for p in jsonl_files if _SESSION_FILE_PATTERN.match(p.name)]
+    jsonl_files = _collect_session_files(base, backend)
 
     # Sort by modification time (newest first) — needed for both filter paths
     jsonl_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -123,7 +119,8 @@ def scan_cli_sessions(
 
     sessions: list[CliSession] = []
     for jsonl_path in jsonl_files:
-        session = _parse_session_file(jsonl_path, max_lines=max_lines_per_file)
+        parser = _parse_codex_session_file if backend == "codex" else _parse_claude_session_file
+        session = parser(jsonl_path, max_lines=max_lines_per_file)
         if session:
             sessions.append(session)
 
@@ -132,8 +129,50 @@ def scan_cli_sessions(
     return sessions
 
 
-def _parse_session_file(path: Path, *, max_lines: int = 20) -> CliSession | None:
-    """Parse a single session JSONL file to extract metadata.
+def scan_all_cli_sessions(
+    *,
+    claude_sessions_path: str | None,
+    codex_sessions_path: str | None,
+    limit: int = 50,
+    max_lines_per_file: int = 20,
+    since_hours: int = 0,
+    min_results: int = 0,
+) -> list[CliSession]:
+    """Scan both standard CLI stores and return one newest-first result list."""
+    sessions: list[CliSession] = []
+    stores: tuple[tuple[str | None, CliBackend], ...] = (
+        (claude_sessions_path, "claude"),
+        (codex_sessions_path, "codex"),
+    )
+    for path, backend in stores:
+        if not path:
+            continue
+        sessions.extend(
+            scan_cli_sessions(
+                path,
+                backend=backend,
+                limit=limit,
+                max_lines_per_file=max_lines_per_file,
+                since_hours=since_hours,
+                min_results=min_results,
+            )
+        )
+    sessions.sort(key=lambda session: session.timestamp or "", reverse=True)
+    return sessions[:limit] if limit > 0 else sessions
+
+
+def _collect_session_files(base: Path, backend: CliBackend) -> list[Path]:
+    if backend == "codex":
+        return list(base.rglob("rollout-*.jsonl"))
+    return [
+        path
+        for path in [*base.glob("*.jsonl"), *base.glob("*/*.jsonl")]
+        if _SESSION_FILE_PATTERN.match(path.name)
+    ]
+
+
+def _parse_claude_session_file(path: Path, *, max_lines: int = 20) -> CliSession | None:
+    """Parse one Claude Code session file to extract metadata.
 
     Reads up to ``max_lines`` lines searching for the first real user message
     (non-meta, non-XML-prefixed) to use as the session summary.
@@ -196,6 +235,67 @@ def _parse_session_file(path: Path, *, max_lines: int = 20) -> CliSession | None
         working_dir=working_dir,
         summary=summary,
         timestamp=timestamp,
+        backend="claude",
+    )
+
+
+def _parse_codex_session_file(path: Path, *, max_lines: int = 20) -> CliSession | None:
+    """Parse one Codex rollout, excluding child/subagent conversations."""
+    session_id: str | None = None
+    working_dir: str | None = None
+    summary: str | None = None
+    timestamp: str | None = None
+
+    try:
+        with path.open(encoding="utf-8", errors="replace") as stream:
+            for lines_read, line in enumerate(stream, start=1):
+                if lines_read > max_lines:
+                    break
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if data.get("type") == "session_meta":
+                    payload = data.get("payload", {})
+                    source = payload.get("source")
+                    if source is not None and not isinstance(source, str):
+                        return None
+                    candidate_id = payload.get("id") or payload.get("session_id")
+                    if isinstance(candidate_id, str) and _SESSION_ID_PATTERN.fullmatch(
+                        candidate_id
+                    ):
+                        session_id = candidate_id
+                    cwd = payload.get("cwd")
+                    working_dir = cwd if isinstance(cwd, str) else None
+                    meta_timestamp = payload.get("timestamp") or data.get("timestamp")
+                    timestamp = meta_timestamp if isinstance(meta_timestamp, str) else None
+                    continue
+
+                if data.get("type") != "event_msg":
+                    continue
+                payload = data.get("payload", {})
+                if payload.get("type") != "user_message":
+                    continue
+                content = payload.get("message")
+                if not isinstance(content, str) or not content.strip():
+                    continue
+                summary = content.strip()[:_MAX_SUMMARY_LEN]
+                if timestamp is None and isinstance(data.get("timestamp"), str):
+                    timestamp = data["timestamp"]
+                break
+    except OSError:
+        logger.debug("Failed to read Codex rollout: %s", path, exc_info=True)
+        return None
+
+    if not session_id or not summary:
+        return None
+    return CliSession(
+        session_id=session_id,
+        working_dir=working_dir,
+        summary=summary,
+        timestamp=timestamp,
+        backend="codex",
     )
 
 
@@ -220,6 +320,7 @@ def extract_recent_messages(
     base_path: str,
     session_id: str,
     *,
+    backend: CliBackend = "claude",
     count: int = 5,
     max_content_len: int = 300,
 ) -> list[SessionMessage]:
@@ -229,17 +330,21 @@ def extract_recent_messages(
     conversation turns (user + assistant pairs).
 
     Args:
-        base_path: The base path to search for session files.
+        base_path: The supported CLI's session storage directory.
         session_id: The session UUID to look up.
+        backend: Transcript format stored under ``base_path``.
         count: Number of recent messages to return.
         max_content_len: Maximum character length per message content.
 
     Returns:
         List of SessionMessage, ordered chronologically (oldest first).
     """
-    base = Path(base_path)
-    # Find the session file
-    candidates = list(base.glob(f"**/{session_id}.jsonl"))
+    if not _SESSION_ID_PATTERN.fullmatch(session_id):
+        return []
+
+    base = Path(base_path).expanduser()
+    pattern = f"*-{session_id}.jsonl" if backend == "codex" else f"{session_id}.jsonl"
+    candidates = list(base.rglob(pattern))
     if not candidates:
         return []
 
@@ -257,23 +362,14 @@ def extract_recent_messages(
                 except json.JSONDecodeError:
                     continue
 
-                msg_type = data.get("type")
-                if msg_type not in ("user", "assistant"):
+                parsed = (
+                    _parse_codex_message(data)
+                    if backend == "codex"
+                    else _parse_claude_message(data)
+                )
+                if parsed is None:
                     continue
-
-                # Skip meta messages
-                if data.get("isMeta"):
-                    continue
-
-                content = _extract_content_text(data.get("message", {}).get("content", "")).strip()
-                if not content:
-                    continue
-
-                # Skip XML-prefixed internal content
-                if content.startswith("<"):
-                    continue
-
-                role = "user" if msg_type == "user" else "assistant"
+                role, content, timestamp = parsed
                 truncated = content[:max_content_len]
                 if len(content) > max_content_len:
                     truncated += "..."
@@ -282,7 +378,7 @@ def extract_recent_messages(
                     SessionMessage(
                         role=role,
                         content=truncated,
-                        timestamp=data.get("timestamp"),
+                        timestamp=timestamp,
                     )
                 )
 
@@ -292,3 +388,43 @@ def extract_recent_messages(
 
     # Return last N messages
     return all_messages[-count:]
+
+
+def _parse_claude_message(data: dict[str, object]) -> tuple[str, str, str | None] | None:
+    msg_type = data.get("type")
+    if msg_type not in ("user", "assistant") or data.get("isMeta"):
+        return None
+    message = data.get("message", {})
+    if not isinstance(message, dict):
+        return None
+    content = _extract_content_text(message.get("content", "")).strip()
+    if not content or content.startswith("<"):
+        return None
+    timestamp = data.get("timestamp")
+    return (
+        "user" if msg_type == "user" else "assistant",
+        content,
+        timestamp if isinstance(timestamp, str) else None,
+    )
+
+
+def _parse_codex_message(data: dict[str, object]) -> tuple[str, str, str | None] | None:
+    if data.get("type") != "event_msg":
+        return None
+    payload = data.get("payload", {})
+    if not isinstance(payload, dict):
+        return None
+    event_type = payload.get("type")
+    if event_type not in ("user_message", "agent_message"):
+        return None
+    if event_type == "agent_message" and payload.get("phase") == "commentary":
+        return None
+    content = payload.get("message")
+    if not isinstance(content, str) or not content.strip():
+        return None
+    timestamp = data.get("timestamp")
+    return (
+        "user" if event_type == "user_message" else "assistant",
+        content.strip(),
+        timestamp if isinstance(timestamp, str) else None,
+    )

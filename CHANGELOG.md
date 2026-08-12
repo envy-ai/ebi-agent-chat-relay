@@ -1,6 +1,6 @@
 # Changelog
 
-Last updated: 2026-08-11
+Last updated: 2026-08-12
 
 All notable changes to this project will be documented in this file.
 
@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+
+- **Zero-config Codex CLI session sync** — `/sync-sessions` now discovers native Codex rollouts
+  under `$CODEX_HOME/sessions` (default `~/.codex/sessions`) alongside Claude Code sessions,
+  imports them with recent conversation context, and pins resumed Discord threads to Codex.
+  `/resume-info` shows the matching `codex resume <session-id>` command.
 
 ### Fixed
 

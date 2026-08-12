@@ -10,12 +10,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import discord
 
 from ..database.repository import SessionRepository
 from ..discord_ui.embeds import COLOR_INFO
-from ..session_sync import CliSession, extract_recent_messages, scan_cli_sessions
+from ..session_sync import CliBackend, CliSession, extract_recent_messages, scan_all_cli_sessions
+
+if TYPE_CHECKING:
+    from ..backend_settings import BackendSettings
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +31,18 @@ class SyncResult:
     total_found: int
     imported: int
     skipped: int
+
+
+def cli_display_name(backend: str) -> str:
+    """Return the human-facing name for a session-owning CLI backend."""
+    return "Codex CLI" if backend == "codex" else "Claude Code CLI"
+
+
+def cli_resume_command(backend: str | None, session_id: str) -> str:
+    """Return the interactive terminal command for a native session resume."""
+    if backend == "codex":
+        return f"codex resume {session_id}"
+    return f"claude --resume {session_id}"
 
 
 async def create_sync_thread(
@@ -43,7 +59,9 @@ async def create_sync_thread(
     if style == "message":
         embed = discord.Embed(
             title=f"\U0001f5a5\ufe0f {thread_name[:80]}",
-            description=f"```\nclaude --resume {cli_session.session_id}\n```",
+            description=(
+                f"```\n{cli_resume_command(cli_session.backend, cli_session.session_id)}\n```"
+            ),
             color=COLOR_INFO,
         )
         if cli_session.working_dir:
@@ -67,12 +85,15 @@ async def post_recent_messages(
     thread: discord.Thread,
     cli_sessions_path: str,
     session_id: str,
+    *,
+    backend: CliBackend = "claude",
 ) -> None:
     """Post recent conversation messages inside the thread for context."""
     recent = await asyncio.to_thread(
         extract_recent_messages,
         cli_sessions_path,
         session_id,
+        backend=backend,
         count=6,
         max_content_len=500,
     )
@@ -84,7 +105,8 @@ async def post_recent_messages(
         if msg.role == "user":
             lines.append(f"**You:** {msg.content}")
         else:
-            lines.append(f"**Claude:** {msg.content}")
+            assistant = "Codex" if backend == "codex" else "Claude"
+            lines.append(f"**{assistant}:** {msg.content}")
 
     # Split into chunks that fit Discord's 2000 char limit
     chunk = ""
@@ -108,6 +130,8 @@ async def sync_cli_sessions(
     thread_style: str,
     since_hours: int,
     min_results: int,
+    codex_sessions_path: str | None = None,
+    backend_settings: BackendSettings | None = None,
 ) -> SyncResult:
     """Scan CLI sessions and import them as Discord threads.
 
@@ -115,8 +139,9 @@ async def sync_cli_sessions(
     """
     # Run CPU/IO-heavy scan in a thread to avoid blocking the event loop
     cli_sessions = await asyncio.to_thread(
-        scan_cli_sessions,
-        cli_sessions_path,
+        scan_all_cli_sessions,
+        claude_sessions_path=cli_sessions_path,
+        codex_sessions_path=codex_sessions_path,
         since_hours=since_hours,
         min_results=min_results,
     )
@@ -143,18 +168,23 @@ async def sync_cli_sessions(
             working_dir=cli_session.working_dir,
             origin="cli",
             summary=cli_session.summary,
+            backend=cli_session.backend,
         )
+        if backend_settings is not None:
+            await backend_settings.set_backend(cli_session.backend, thread_id=thread.id)
 
         # Post info embed inside the thread (for channel-style threads
         # this is the main content; for message-style the embed is on
         # the parent message so we skip the duplicate here)
         if thread_style == "channel":
             info_embed = discord.Embed(
-                title="\U0001f5a5\ufe0f Imported CLI Session",
+                title=f"\U0001f5a5\ufe0f Imported {cli_display_name(cli_session.backend)} Session",
                 description=(
-                    f"This thread is linked to a Claude Code CLI session.\n"
+                    f"This thread is linked to a {cli_display_name(cli_session.backend)} session.\n"
                     f"Reply here to continue the conversation.\n\n"
-                    f"```\nclaude --resume {cli_session.session_id}\n```"
+                    f"```\n"
+                    f"{cli_resume_command(cli_session.backend, cli_session.session_id)}\n"
+                    f"```"
                 ),
                 color=COLOR_INFO,
             )
@@ -170,7 +200,17 @@ async def sync_cli_sessions(
             await thread.send(embed=info_embed)
 
         # Post recent conversation messages for context
-        await post_recent_messages(thread, cli_sessions_path, cli_session.session_id)
+        sessions_path = (
+            codex_sessions_path
+            if cli_session.backend == "codex" and codex_sessions_path
+            else cli_sessions_path
+        )
+        await post_recent_messages(
+            thread,
+            sessions_path,
+            cli_session.session_id,
+            backend=cli_session.backend,
+        )
 
         imported += 1
 

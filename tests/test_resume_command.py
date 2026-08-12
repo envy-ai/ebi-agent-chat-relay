@@ -17,6 +17,7 @@ def _make_record(
     working_dir: str | None = "/home/user/project",
     model: str | None = "sonnet",
     last_used_at: str = "2026-02-19 11:00:00",
+    backend: str | None = None,
 ) -> SessionRecord:
     return SessionRecord(
         thread_id=thread_id,
@@ -25,6 +26,7 @@ def _make_record(
         model=model,
         origin=origin,
         summary=summary,
+        backend=backend,
         created_at="2026-02-19 10:00:00",
         last_used_at=last_used_at,
     )
@@ -195,6 +197,37 @@ class TestResumeSelectView:
         selects = [c for c in view.children if isinstance(c, discord.ui.Select)]
         desc = selects[0].options[0].description or ""
         assert "2026-04-25" in desc
+
+    async def test_selected_session_preserves_its_backend(self):
+        from claude_discord.discord_ui.views import ResumeSelectView
+
+        record = _make_record(
+            session_id="019ff751-0783-71f1-bd8b-82242475bd1d",
+            summary="Codex task",
+            backend="codex",
+        )
+        channel = MagicMock(spec=discord.TextChannel)
+        chat_cog = MagicMock()
+        chat_cog.spawn_session = AsyncMock()
+        bot = MagicMock()
+        bot.channel_id = 999
+        bot.get_channel = MagicMock(return_value=channel)
+        bot.get_cog = MagicMock(return_value=chat_cog)
+        view = ResumeSelectView(records=[record], bot=bot)
+        interaction = _make_interaction()
+        interaction.data = {"values": ["0"]}
+        interaction.response.edit_message = AsyncMock()
+
+        select = next(child for child in view.children if isinstance(child, discord.ui.Select))
+        await select.callback(interaction)
+
+        chat_cog.spawn_session.assert_awaited_once_with(
+            channel=channel,
+            prompt="Resuming previous session. Continue from where we left off.",
+            thread_name="▶ Codex task",
+            session_id=record.session_id,
+            backend="codex",
+        )
 
 
 class TestResumeCommandWithQuery:

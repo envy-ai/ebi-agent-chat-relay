@@ -10,7 +10,9 @@ Provides slash commands for viewing and managing Claude Code sessions:
 from __future__ import annotations
 
 import logging
+import os
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import discord
@@ -25,9 +27,10 @@ from ..database.settings_repo import SettingsRepository
 from ..discord_ui.embeds import COLOR_ERROR, COLOR_INFO, COLOR_SUCCESS, COLOR_TOOL
 from ..discord_ui.views import ResumeSelectView, ToolSelectView
 from ..worktree import WorktreeManager
-from .session_sync import sync_cli_sessions
+from .session_sync import cli_resume_command, sync_cli_sessions
 
 if TYPE_CHECKING:
+    from ..backend_settings import BackendSettings
     from ..bot import ClaudeDiscordBot
 
 logger = logging.getLogger(__name__)
@@ -168,12 +171,24 @@ class SessionManageCog(commands.Cog):
         settings_repo: SettingsRepository | None = None,
         runner: object | None = None,
         usage_repo: UsageStatsRepository | None = None,
+        codex_sessions_path: str | None = None,
+        backend_settings: BackendSettings | None = None,
     ) -> None:
         self.bot = bot
         self.repo = repo
-        self.cli_sessions_path = cli_sessions_path
+        claude_root = cli_sessions_path or os.getenv("CLI_SESSIONS_PATH")
+        self.cli_sessions_path = str(
+            Path(claude_root or Path.home() / ".claude" / "projects").expanduser()
+        )
+        codex_home = Path(os.getenv("CODEX_HOME") or Path.home() / ".codex").expanduser()
+        self.codex_sessions_path = str(
+            Path(codex_sessions_path).expanduser()
+            if codex_sessions_path
+            else codex_home / "sessions"
+        )
         self.settings_repo = settings_repo
         self.usage_repo = usage_repo
+        self.backend_settings = backend_settings
         # Optional ClaudeRunner reference for reading the default model.
         # Resolved lazily from ClaudeChatCog if not provided directly.
         self._runner = runner
@@ -494,7 +509,7 @@ class SessionManageCog(commands.Cog):
         embed = discord.Embed(
             title="\U0001f517 Resume from CLI",
             description=(
-                f"```\nclaude --resume {record.session_id}\n```\n"
+                f"```\n{cli_resume_command(record.backend, record.session_id)}\n```\n"
                 f"Run this command in your terminal to continue this session."
             ),
             color=COLOR_INFO,
@@ -609,18 +624,10 @@ class SessionManageCog(commands.Cog):
 
     @app_commands.command(
         name="sync-sessions",
-        description="Import CLI sessions from Claude Code as Discord threads",
+        description="Import Claude Code and Codex CLI sessions as Discord threads",
     )
     async def sync_sessions(self, interaction: discord.Interaction) -> None:
         """Scan CLI session storage and create threads for unknown sessions."""
-        if not self.cli_sessions_path:
-            await interaction.response.send_message(
-                "\u274c CLI sessions path is not configured. "
-                "Set `cli_sessions_path` when initializing SessionManageCog.",
-                ephemeral=True,
-            )
-            return
-
         await interaction.response.defer()
 
         thread_style = await self._get_thread_style()
@@ -647,6 +654,8 @@ class SessionManageCog(commands.Cog):
             thread_style=thread_style,
             since_hours=since_hours,
             min_results=min_results,
+            codex_sessions_path=self.codex_sessions_path,
+            backend_settings=self.backend_settings,
         )
 
         embed = discord.Embed(

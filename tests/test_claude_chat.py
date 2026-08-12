@@ -583,6 +583,32 @@ class TestSpawnSession:
         thread.send.assert_called_once_with("Hello")
         mock_run.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_spawn_pins_requested_backend_before_start(self) -> None:
+        """A resumed Codex session must not inherit a Claude global default."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        import discord
+
+        thread = MagicMock(spec=discord.Thread)
+        thread.id = 42
+        thread.send = AsyncMock()
+        channel = MagicMock()
+        channel.create_thread = AsyncMock(return_value=thread)
+        backend_settings = MagicMock()
+        backend_settings.set_backend = AsyncMock()
+        cog = ClaudeChatCog(
+            bot=MagicMock(),
+            repo=MagicMock(),
+            runner=MagicMock(),
+            backend_settings=backend_settings,
+        )
+
+        with patch.object(cog, "_run_claude", new=AsyncMock()):
+            await cog.spawn_session(channel, "Continue", backend="codex")
+
+        backend_settings.set_backend.assert_awaited_once_with("codex", thread_id=42)
+
 
 class TestFetchSeedContext:
     """Tests for ClaudeChatCog._fetch_seed_context()."""

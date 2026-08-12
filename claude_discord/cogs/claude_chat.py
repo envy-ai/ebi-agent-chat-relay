@@ -792,6 +792,7 @@ class ClaudeChatCog(commands.Cog):
         auto_start: bool = True,
         result_sink: Callable[[str | None, str | None], Awaitable[None]] | None = None,
         attachments: list[tuple[str, bytes]] | None = None,
+        backend: str | None = None,
     ) -> discord.Thread:
         """Create a new thread and optionally start a Claude Code session.
 
@@ -810,6 +811,8 @@ class ClaudeChatCog(commands.Cog):
             session_id: Optional Claude session ID to resume via ``--resume``.
                         When supplied the new Claude process continues the
                         previous conversation rather than starting fresh.
+            backend: Optional backend that owns ``session_id``. When supplied,
+                     the new thread is pinned to that backend before it starts.
             auto_start: Whether to immediately start a Claude Code session.
                         When ``False``, only the thread and seed message are
                         created — a Claude session will start when a user
@@ -835,6 +838,8 @@ class ClaudeChatCog(commands.Cog):
             type=discord.ChannelType.public_thread,
             auto_archive_duration=60,
         )
+        if backend is not None and self._backend_settings is not None:
+            await self._backend_settings.set_backend(backend, thread_id=thread.id)
         # Post the prompt so StatusManager has a Message to add reactions to.
         # Long prompts (e.g. an ingested Teams thread) exceed Discord's
         # per-message limit, so chunk the seed for display. The full prompt is

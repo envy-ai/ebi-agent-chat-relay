@@ -88,6 +88,36 @@ def _write_session_jsonl(path: Path, session_id: str, messages: list[dict]) -> N
             f.write(json.dumps(msg) + "\n")
 
 
+def _write_codex_session_jsonl(
+    root: Path,
+    session_id: str,
+    messages: list[dict],
+    *,
+    source: object = "cli",
+) -> Path:
+    """Write a minimal Codex rollout in its year/month/day directory layout."""
+    session_dir = root / "2026" / "08" / "12"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    path = session_dir / f"rollout-2026-08-12T10-00-00-{session_id}.jsonl"
+    records = [
+        {
+            "timestamp": "2026-08-12T14:00:00.000Z",
+            "type": "session_meta",
+            "payload": {
+                "id": session_id,
+                "timestamp": "2026-08-12T14:00:00.000Z",
+                "cwd": "/home/user/codex-project",
+                "source": source,
+            },
+        },
+        *messages,
+    ]
+    with open(path, "w") as f:
+        for record in records:
+            f.write(json.dumps(record) + "\n")
+    return path
+
+
 class TestScanCliSessions:
     """Test scanning Claude Code CLI session files."""
 
@@ -444,6 +474,50 @@ class TestScanCliSessions:
         )
         assert s.session_id == "test-id"
         assert s.working_dir == "/home"
+
+
+class TestScanCodexCliSessions:
+    """Test scanning OpenAI Codex rollout files."""
+
+    def test_scan_codex_rollout(self, tmp_path):
+        session_id = "019ff751-0783-71f1-bd8b-82242475bd1d"
+        _write_codex_session_jsonl(
+            tmp_path,
+            session_id,
+            [
+                {
+                    "timestamp": "2026-08-12T14:00:01.000Z",
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "Build the Codex importer"},
+                }
+            ],
+        )
+
+        sessions = scan_cli_sessions(str(tmp_path), backend="codex")
+
+        assert len(sessions) == 1
+        assert sessions[0].session_id == session_id
+        assert sessions[0].summary == "Build the Codex importer"
+        assert sessions[0].working_dir == "/home/user/codex-project"
+        assert sessions[0].timestamp == "2026-08-12T14:00:00.000Z"
+        assert sessions[0].backend == "codex"
+
+    def test_scan_codex_skips_subagent_rollout(self, tmp_path):
+        session_id = "019ff751-0783-71f1-bd8b-82242475bd1d"
+        _write_codex_session_jsonl(
+            tmp_path,
+            session_id,
+            [
+                {
+                    "timestamp": "2026-08-12T14:00:01.000Z",
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "Subagent task"},
+                }
+            ],
+            source={"subagent": {"thread_spawn": {"depth": 1}}},
+        )
+
+        assert scan_cli_sessions(str(tmp_path), backend="codex") == []
 
 
 class TestScanSinceDays:
@@ -876,3 +950,42 @@ class TestExtractRecentMessages:
         result = extract_recent_messages(str(tmp_path), sid, count=5)
         assert len(result) == 1
         assert result[0].content == "From subdir"
+
+    def test_extract_codex_messages_omits_commentary(self, tmp_path):
+        sid = "019ff751-0783-71f1-bd8b-82242475bd1d"
+        _write_codex_session_jsonl(
+            tmp_path,
+            sid,
+            [
+                {
+                    "timestamp": "2026-08-12T14:00:01.000Z",
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "Fix session sync"},
+                },
+                {
+                    "timestamp": "2026-08-12T14:00:02.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_message",
+                        "phase": "commentary",
+                        "message": "I am inspecting the code.",
+                    },
+                },
+                {
+                    "timestamp": "2026-08-12T14:00:03.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_message",
+                        "phase": "final_answer",
+                        "message": "Session sync is fixed.",
+                    },
+                },
+            ],
+        )
+
+        result = extract_recent_messages(str(tmp_path), sid, backend="codex", count=5)
+
+        assert [(message.role, message.content) for message in result] == [
+            ("user", "Fix session sync"),
+            ("assistant", "Session sync is fixed."),
+        ]

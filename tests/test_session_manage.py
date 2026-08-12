@@ -18,6 +18,7 @@ def _make_record(
     model: str | None = "sonnet",
     context_window: int | None = None,
     context_used: int | None = None,
+    backend: str | None = None,
 ) -> SessionRecord:
     return SessionRecord(
         thread_id=thread_id,
@@ -28,6 +29,7 @@ def _make_record(
         summary=summary,
         context_window=context_window,
         context_used=context_used,
+        backend=backend,
         created_at="2026-02-19 10:00:00",
         last_used_at="2026-02-19 11:00:00",
     )
@@ -90,6 +92,21 @@ class TestResumeInfo:
         embed = call_args.kwargs.get("embed")
         assert embed is not None
         assert "def-456" in embed.description
+
+    async def test_shows_codex_resume_command(self):
+        cog = _make_cog()
+        record = _make_record(
+            thread_id=555,
+            session_id="019ff751-0783-71f1-bd8b-82242475bd1d",
+            backend="codex",
+        )
+        cog.repo.get = AsyncMock(return_value=record)
+        interaction = _make_thread_interaction(thread_id=555)
+
+        await cog.resume_info.callback(cog, interaction)
+
+        embed = interaction.response.send_message.call_args.kwargs["embed"]
+        assert "codex resume 019ff751-0783-71f1-bd8b-82242475bd1d" in embed.description
 
 
 class TestSessionsList:
