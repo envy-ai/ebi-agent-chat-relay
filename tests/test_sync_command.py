@@ -194,6 +194,81 @@ class TestSyncSessions:
         info_embed = thread.send.call_args_list[0].kwargs["embed"]
         assert "Codex CLI" in info_embed.title
 
+    async def test_sync_specific_codex_session_bypasses_configured_maximum(self, tmp_path):
+        """An exact Codex ID is imported even when it is outside the normal batch."""
+        claude_root = tmp_path / "claude"
+        claude_root.mkdir()
+        codex_root = tmp_path / "codex" / "2026" / "08" / "12"
+        codex_root.mkdir(parents=True)
+        target_id = "019ff751-0783-71f1-bd8b-82242475bd1d"
+        distractor_id = "aaaaaaaa-aaaa-aaaa-aaaa-000000000001"
+
+        for session_id, prompt in (
+            (target_id, "Import this specific session"),
+            (distractor_id, "Do not import this session"),
+        ):
+            rollout = codex_root / f"rollout-2026-08-12T10-00-00-{session_id}.jsonl"
+            with open(rollout, "w") as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "timestamp": "2026-08-12T14:00:00.000Z",
+                            "type": "session_meta",
+                            "payload": {
+                                "id": session_id,
+                                "timestamp": "2026-08-12T14:00:00.000Z",
+                                "cwd": "/home/user/codex-project",
+                                "source": "cli",
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+                f.write(
+                    json.dumps(
+                        {
+                            "timestamp": "2026-08-12T14:00:01.000Z",
+                            "type": "event_msg",
+                            "payload": {"type": "user_message", "message": prompt},
+                        }
+                    )
+                    + "\n"
+                )
+
+        cog = _make_cog(
+            cli_sessions_path=str(claude_root),
+            codex_sessions_path=str(tmp_path / "codex"),
+        )
+
+        async def get_setting(key: str) -> str | None:
+            if key == "sync_max_results":
+                return "1"
+            return None
+
+        settings_repo = MagicMock()
+        settings_repo.get = AsyncMock(side_effect=get_setting)
+        cog.settings_repo = settings_repo
+        interaction = _make_channel_interaction()
+
+        await cog.sync_sessions.callback(cog, interaction, session_id=target_id)
+
+        save_kwargs = cog.repo.save.call_args.kwargs
+        assert save_kwargs["session_id"] == target_id
+        assert save_kwargs["backend"] == "codex"
+        assert cog.bot.get_channel(999).create_thread.await_count == 1
+
+    async def test_sync_specific_codex_session_rejects_invalid_id(self, tmp_path):
+        """Invalid IDs are rejected before scanning local session storage."""
+        cog = _make_cog(codex_sessions_path=str(tmp_path))
+        interaction = _make_channel_interaction()
+
+        await cog.sync_sessions.callback(cog, interaction, session_id="../../*.jsonl")
+
+        interaction.response.send_message.assert_awaited_once()
+        assert interaction.response.send_message.call_args.kwargs["ephemeral"] is True
+        interaction.response.defer.assert_not_awaited()
+        cog.bot.get_channel.assert_not_called()
+
     async def test_sync_skips_already_known_sessions(self, tmp_path):
         session_id = "bbb22222-1234-5678-9abc-def012345678"
         jsonl_path = tmp_path / f"{session_id}.jsonl"

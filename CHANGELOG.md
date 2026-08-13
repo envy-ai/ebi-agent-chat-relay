@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   defaults to ten sessions total, can be changed with `/sync-settings`, and keeps imported thread
   names within Discord's 100-character limit
   after their prefix is added.
+- **Exact Codex session sync** — `/sync-sessions session_id:<id>` imports one specific Codex
+  session even when it falls outside the configured time window or batch maximum.
 
 ## [4.0.0] - 2026-08-11
 

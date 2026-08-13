@@ -524,6 +524,53 @@ class TestScanCodexCliSessions:
 
         assert scan_cli_sessions(str(tmp_path), backend="codex") == []
 
+    def test_scan_specific_codex_session_ignores_batch_position(self, tmp_path):
+        """An exact lookup finds a session outside the normal newest-N batch."""
+        import os
+
+        from claude_discord.session_sync import scan_codex_session
+
+        target_id = "019ff751-0783-71f1-bd8b-82242475bd1d"
+        target_path = _write_codex_session_jsonl(
+            tmp_path,
+            target_id,
+            [
+                {
+                    "timestamp": "2026-01-01T10:00:01.000Z",
+                    "type": "event_msg",
+                    "payload": {"type": "user_message", "message": "Import this old session"},
+                }
+            ],
+        )
+        os.utime(target_path, (1, 1))
+
+        for index in range(12):
+            session_id = f"aaaaaaaa-aaaa-aaaa-aaaa-{index:012d}"
+            path = _write_codex_session_jsonl(
+                tmp_path,
+                session_id,
+                [
+                    {
+                        "timestamp": f"2026-08-12T14:00:{index:02d}.000Z",
+                        "type": "event_msg",
+                        "payload": {"type": "user_message", "message": f"New task {index}"},
+                    }
+                ],
+            )
+            os.utime(path, (100 + index, 100 + index))
+
+        session = scan_codex_session(str(tmp_path), target_id)
+
+        assert session is not None
+        assert session.session_id == target_id
+        assert session.summary == "Import this old session"
+
+    def test_scan_specific_codex_session_rejects_invalid_id(self, tmp_path):
+        """Session IDs cannot inject glob syntax or path traversal."""
+        from claude_discord.session_sync import scan_codex_session
+
+        assert scan_codex_session(str(tmp_path), "../../*.jsonl") is None
+
 
 class TestScanAllCliSessions:
     """Test the combined Claude and Codex import candidate list."""

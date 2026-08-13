@@ -161,6 +161,32 @@ def scan_all_cli_sessions(
     return sessions[:limit] if limit > 0 else sessions
 
 
+def is_valid_cli_session_id(session_id: str) -> bool:
+    """Return whether a CLI session ID is safe for exact local lookup."""
+    return _SESSION_ID_PATTERN.fullmatch(session_id) is not None
+
+
+def scan_codex_session(
+    base_path: str,
+    session_id: str,
+    *,
+    max_lines_per_file: int = 20,
+) -> CliSession | None:
+    """Find and parse one exact Codex session, independent of batch filters."""
+    if not is_valid_cli_session_id(session_id):
+        return None
+
+    base = Path(base_path).expanduser()
+    if not base.is_dir():
+        return None
+
+    for path in base.rglob(f"*-{session_id}.jsonl"):
+        session = _parse_codex_session_file(path, max_lines=max_lines_per_file)
+        if session is not None and session.session_id == session_id:
+            return session
+    return None
+
+
 def _collect_session_files(base: Path, backend: CliBackend) -> list[Path]:
     if backend == "codex":
         return list(base.rglob("rollout-*.jsonl"))
@@ -339,7 +365,7 @@ def extract_recent_messages(
     Returns:
         List of SessionMessage, ordered chronologically (oldest first).
     """
-    if not _SESSION_ID_PATTERN.fullmatch(session_id):
+    if not is_valid_cli_session_id(session_id):
         return []
 
     base = Path(base_path).expanduser()

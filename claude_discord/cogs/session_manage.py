@@ -26,6 +26,7 @@ from ..database.repository import SessionRepository, UsageStatsRepository
 from ..database.settings_repo import SettingsRepository
 from ..discord_ui.embeds import COLOR_ERROR, COLOR_INFO, COLOR_SUCCESS, COLOR_TOOL
 from ..discord_ui.views import ResumeSelectView, ToolSelectView
+from ..session_sync import is_valid_cli_session_id
 from ..worktree import WorktreeManager
 from .session_sync import cli_resume_command, sync_cli_sessions
 
@@ -653,8 +654,23 @@ class SessionManageCog(commands.Cog):
         name="sync-sessions",
         description="Import Claude Code and Codex CLI sessions as Discord threads",
     )
-    async def sync_sessions(self, interaction: discord.Interaction) -> None:
+    @app_commands.describe(session_id="Import one exact Codex CLI session ID")
+    async def sync_sessions(
+        self,
+        interaction: discord.Interaction,
+        session_id: str | None = None,
+    ) -> None:
         """Scan CLI session storage and create threads for unknown sessions."""
+        if session_id is not None:
+            session_id = session_id.strip()
+            if not is_valid_cli_session_id(session_id):
+                await interaction.response.send_message(
+                    "❌ Enter a valid Codex session ID containing lowercase hex digits "
+                    "and hyphens.",
+                    ephemeral=True,
+                )
+                return
+
         await interaction.response.defer()
 
         thread_style = await self._get_thread_style()
@@ -683,6 +699,7 @@ class SessionManageCog(commands.Cog):
             since_hours=since_hours,
             min_results=min_results,
             limit=max_results,
+            session_id=session_id,
             codex_sessions_path=self.codex_sessions_path,
             backend_settings=self.backend_settings,
         )

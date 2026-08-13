@@ -16,7 +16,13 @@ import discord
 
 from ..database.repository import SessionRepository
 from ..discord_ui.embeds import COLOR_INFO
-from ..session_sync import CliBackend, CliSession, extract_recent_messages, scan_all_cli_sessions
+from ..session_sync import (
+    CliBackend,
+    CliSession,
+    extract_recent_messages,
+    scan_all_cli_sessions,
+    scan_codex_session,
+)
 
 if TYPE_CHECKING:
     from ..backend_settings import BackendSettings
@@ -131,6 +137,7 @@ async def sync_cli_sessions(
     since_hours: int,
     min_results: int,
     limit: int = 10,
+    session_id: str | None = None,
     codex_sessions_path: str | None = None,
     backend_settings: BackendSettings | None = None,
 ) -> SyncResult:
@@ -138,15 +145,24 @@ async def sync_cli_sessions(
 
     Returns a SyncResult with counts of found/imported/skipped sessions.
     """
-    # Run CPU/IO-heavy scan in a thread to avoid blocking the event loop
-    cli_sessions = await asyncio.to_thread(
-        scan_all_cli_sessions,
-        claude_sessions_path=cli_sessions_path,
-        codex_sessions_path=codex_sessions_path,
-        since_hours=since_hours,
-        min_results=min_results,
-        limit=limit,
-    )
+    # Run CPU/IO-heavy scan in a thread to avoid blocking the event loop.
+    # An exact Codex lookup intentionally bypasses all batch selection filters.
+    if session_id is not None:
+        codex_session = await asyncio.to_thread(
+            scan_codex_session,
+            codex_sessions_path or "",
+            session_id,
+        )
+        cli_sessions = [codex_session] if codex_session is not None else []
+    else:
+        cli_sessions = await asyncio.to_thread(
+            scan_all_cli_sessions,
+            claude_sessions_path=cli_sessions_path,
+            codex_sessions_path=codex_sessions_path,
+            since_hours=since_hours,
+            min_results=min_results,
+            limit=limit,
+        )
 
     imported = 0
     skipped = 0
