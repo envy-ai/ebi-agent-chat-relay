@@ -15,6 +15,7 @@ import contextlib
 import logging
 import os
 import tempfile
+from collections import deque
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -63,6 +64,7 @@ logger = logging.getLogger(__name__)
 _HELP_CATEGORY: dict[str, str | None] = {
     "help": None,  # the help command doesn't list itself
     "stop": "📌 Session",
+    "queue": "📌 Session",
     "clear": "📌 Session",
     "rewind": "📌 Session",
     "compact": "📌 Session",
@@ -162,6 +164,8 @@ class ClaudeChatCog(commands.Cog):
         # to fully clean up before starting the replacement session.
         self._active_tasks: dict[int, asyncio.Task] = {}
         self._thread_locks: dict[int, asyncio.Lock] = {}
+        self._command_queues: dict[int, deque[tuple[discord.Message, str]]] = {}
+        self._queue_workers: dict[int, asyncio.Task[None]] = {}
         # Dashboard may be None until bot is ready; resolved lazily in _get_dashboard()
         self._dashboard = dashboard
         # For AskUserQuestion persistence across restarts
@@ -435,6 +439,34 @@ class ClaudeChatCog(commands.Cog):
         # _active_runners cleanup is handled by _run_claude's finally block.
         # We intentionally do NOT delete from the session DB so the user can resume.
         await interaction.response.send_message(embed=stopped_embed())
+
+    @app_commands.command(
+        name="queue",
+        description="Run an instruction after the current session turn finishes",
+    )
+    @app_commands.describe(command="Instruction to run without interrupting the current turn")
+    async def queue_command(self, interaction: discord.Interaction, command: str) -> None:
+        """Append an instruction to this thread's non-interrupting FIFO queue."""
+        if not isinstance(interaction.channel, discord.Thread):
+            await interaction.response.send_message(
+                "This command can only be used in a Claude chat thread.", ephemeral=True
+            )
+            return
+
+        command = command.strip()
+        if not command:
+            await interaction.response.send_message(
+                "Enter an instruction to queue.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        position = await self._enqueue_command(interaction.channel, command)
+        await interaction.followup.send(
+            f"📥 Queued as item **#{position}**. It will run without interrupting "
+            "the current turn.",
+            ephemeral=True,
+        )
 
     @app_commands.command(
         name="compact",
@@ -918,6 +950,91 @@ class ClaudeChatCog(commands.Cog):
             interrupt_existing=interrupt,
             interrupt_notice="-# ⚡ Interrupted by another session's message...",
         )
+
+    async def _enqueue_command(self, thread: discord.Thread, prompt: str) -> int:
+        """Append one visible command to *thread* and return its FIFO position."""
+        display = f"📥 **Queued command:**\n{prompt}"
+        seed_message: discord.Message | None = None
+        for chunk in chunk_message(display) or [display]:
+            seed_message = await thread.send(chunk)
+        if seed_message is None:  # pragma: no cover - defensive; loop always runs
+            raise RuntimeError("Queued command could not be posted")
+
+        queue = self._command_queues.setdefault(thread.id, deque())
+        queue.append((seed_message, prompt))
+        position = len(queue)
+
+        worker = self._queue_workers.get(thread.id)
+        if worker is None or worker.done():
+            worker = asyncio.create_task(
+                self._drain_command_queue(thread),
+                name=f"command-queue-{thread.id}",
+            )
+            self._queue_workers[thread.id] = worker
+        return position
+
+    async def _drain_command_queue(self, thread: discord.Thread) -> None:
+        """Run one thread's queued commands serially until its FIFO is empty."""
+        queue = self._command_queues[thread.id]
+        current_task = asyncio.current_task()
+        try:
+            while queue:
+                seed_message, prompt = queue[0]
+                try:
+                    await self._execute_queued_command(thread, seed_message, prompt)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Queued command failed in thread %d", thread.id)
+                    with contextlib.suppress(discord.HTTPException):
+                        await thread.send("❌ A queued command failed; continuing with the queue.")
+                finally:
+                    queue.popleft()
+        finally:
+            if self._queue_workers.get(thread.id) is current_task:
+                self._queue_workers.pop(thread.id, None)
+            # A cancellation cannot safely resume partially processed prompts.
+            queue.clear()
+            self._command_queues.pop(thread.id, None)
+
+    async def _execute_queued_command(
+        self,
+        thread: discord.Thread,
+        seed_message: discord.Message,
+        prompt: str,
+    ) -> None:
+        """Wait for the thread to become idle, then run one queued prompt."""
+        active_task = self._active_tasks.get(thread.id)
+        if (
+            active_task is not None
+            and active_task is not asyncio.current_task()
+            and not active_task.done()
+        ):
+            with contextlib.suppress(Exception):
+                await active_task
+
+        # Resolve the session only after the prior turn has finished, since a
+        # new conversation may not have stored its native session ID earlier.
+        record = await self.repo.get(thread.id)
+        session_id = record.session_id if record else None
+        if record is not None and session_id:
+            session_id = await self._session_id_for_current_backend(thread, record)
+
+        chat_only = (thread.parent_id or 0) in self._chat_only_channel_ids
+        # Use a child task so _active_tasks tracks only this individual run,
+        # not the long-lived worker that may still have more items behind it.
+        run_task = asyncio.create_task(
+            self._run_claude(
+                seed_message,
+                thread,
+                prompt,
+                session_id=session_id,
+                working_dir_override=record.working_dir if record else None,
+                chat_only=chat_only,
+                interrupt_existing=False,
+            )
+        )
+        await run_task
 
     async def cog_unload(self) -> None:
         """Mark all mid-run Claude sessions for auto-resume on the next bot startup.

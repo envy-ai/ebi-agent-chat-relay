@@ -49,9 +49,14 @@ def _make_thread_interaction(thread_id: int = 12345) -> MagicMock:
     interaction = MagicMock(spec=discord.Interaction)
     thread = MagicMock(spec=discord.Thread)
     thread.id = thread_id
+    thread.parent_id = 999
+    thread.send = AsyncMock()
     interaction.channel = thread
     interaction.response = MagicMock()
     interaction.response.send_message = AsyncMock()
+    interaction.response.defer = AsyncMock()
+    interaction.followup = MagicMock()
+    interaction.followup.send = AsyncMock()
     return interaction
 
 
@@ -157,6 +162,120 @@ class TestStopCommand:
         assert "stopped" in embed.title.lower()
         # Orange color (not red error)
         assert embed.color.value == 0xFFA500
+
+
+class TestQueueCommand:
+    """Tests for stackable, non-interrupting queued prompts."""
+
+    @pytest.mark.asyncio
+    async def test_queue_outside_thread_sends_ephemeral_error(self) -> None:
+        cog = _make_cog()
+        interaction = _make_channel_interaction()
+
+        await cog.queue_command.callback(cog, interaction, command="Run tests")
+
+        interaction.response.send_message.assert_awaited_once()
+        assert interaction.response.send_message.call_args.kwargs["ephemeral"] is True
+        assert cog._command_queues == {}
+
+    @pytest.mark.asyncio
+    async def test_queue_command_acknowledges_position_immediately(self) -> None:
+        cog = _make_cog()
+        interaction = _make_thread_interaction()
+        cog._enqueue_command = AsyncMock(return_value=2)
+
+        await cog.queue_command.callback(cog, interaction, command="  Run tests  ")
+
+        interaction.response.defer.assert_awaited_once_with(ephemeral=True)
+        cog._enqueue_command.assert_awaited_once_with(interaction.channel, "Run tests")
+        interaction.followup.send.assert_awaited_once()
+        assert "#2" in interaction.followup.send.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_multiple_queued_commands_run_in_fifo_order(self) -> None:
+        cog = _make_cog()
+        thread = _make_thread_interaction().channel
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        order: list[str] = []
+
+        async def execute(thread: object, message: object, prompt: str) -> None:
+            order.append(prompt)
+            if prompt == "first":
+                first_started.set()
+                await release_first.wait()
+
+        cog._execute_queued_command = execute  # type: ignore[method-assign]
+
+        first_position = await cog._enqueue_command(thread, "first")
+        await first_started.wait()
+        second_position = await cog._enqueue_command(thread, "second")
+        third_position = await cog._enqueue_command(thread, "third")
+
+        assert (first_position, second_position, third_position) == (1, 2, 3)
+        release_first.set()
+        worker = cog._queue_workers[thread.id]
+        await worker
+
+        assert order == ["first", "second", "third"]
+        assert thread.id not in cog._command_queues
+        assert thread.id not in cog._queue_workers
+
+    @pytest.mark.asyncio
+    async def test_queued_command_waits_without_interrupting_active_run(self) -> None:
+        cog = _make_cog()
+        thread = _make_thread_interaction().channel
+        active_done = asyncio.Event()
+        queued_started = asyncio.Event()
+
+        async def active_run() -> None:
+            await active_done.wait()
+
+        active_task = asyncio.create_task(active_run())
+        active_runner = MagicMock()
+        active_runner.interrupt = AsyncMock()
+        cog._active_tasks[thread.id] = active_task
+        cog._active_runners[thread.id] = active_runner
+
+        async def queued_run(*args: object, **kwargs: object) -> None:
+            queued_started.set()
+
+        cog._run_claude = queued_run  # type: ignore[method-assign]
+
+        await cog._enqueue_command(thread, "after current")
+        await asyncio.sleep(0)
+
+        assert not queued_started.is_set()
+        active_runner.interrupt.assert_not_awaited()
+
+        active_done.set()
+        await active_task
+        worker = cog._queue_workers[thread.id]
+        await worker
+
+        assert queued_started.is_set()
+        active_runner.interrupt.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_queued_command_uses_latest_session_without_preemption(self) -> None:
+        cog = _make_cog()
+        thread = _make_thread_interaction().channel
+        seed_message = MagicMock(spec=discord.Message)
+        record = MagicMock()
+        record.session_id = "latest-session-id"
+        record.working_dir = "/latest/workdir"
+        cog.repo.get = AsyncMock(return_value=record)
+        cog._session_id_for_current_backend = AsyncMock(return_value="latest-session-id")
+        cog._run_claude = AsyncMock()
+
+        await cog._execute_queued_command(thread, seed_message, "next instruction")
+
+        cog._run_claude.assert_awaited_once()
+        args, kwargs = cog._run_claude.call_args
+        assert args[:3] == (seed_message, thread, "next instruction")
+        assert kwargs["session_id"] == "latest-session-id"
+        assert kwargs["working_dir_override"] == "/latest/workdir"
+        assert kwargs["interrupt_existing"] is False
 
 
 class TestActiveCountAlias:

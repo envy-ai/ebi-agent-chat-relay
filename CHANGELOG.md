@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after their prefix is added.
 - **Exact Codex session sync** — `/sync-sessions session_id:<id>` imports one specific Codex
   session even when it falls outside the configured time window or batch maximum.
+- **Stackable thread command queue** — `/queue command:<instruction>` appends prompts in FIFO
+  order, waits for the active turn without interrupting it, and resumes the latest session between
+  queued items.
 
 ## [4.0.0] - 2026-08-11
 
