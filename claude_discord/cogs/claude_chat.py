@@ -250,6 +250,27 @@ class ClaudeChatCog(commands.Cog):
         if self._allowed_user_ids is not None and message.author.id not in self._allowed_user_ids:
             return
 
+        # Discord normally dispatches /queue as an application-command
+        # interaction. If the user sends the same syntax as plain text, it
+        # arrives here instead; intercept it before the regular reply path,
+        # which intentionally interrupts an active turn.
+        if isinstance(message.channel, discord.Thread):
+            parts = message.content.strip().split(maxsplit=1)
+            if parts and parts[0].casefold() == "/queue":
+                if len(parts) == 1:
+                    await message.channel.send("Enter an instruction after `/queue`.")
+                    return
+                position = await self._enqueue_command(
+                    message.channel,
+                    parts[1],
+                    seed_message=message,
+                )
+                await message.channel.send(
+                    f"📥 Queued as item **#{position}**. It will run without interrupting "
+                    "the current turn."
+                )
+                return
+
         # Inside a no-mention channel (or a thread under it) everything is for
         # Claude, and the session model applies: a channel message opens a
         # thread, a thread message continues that thread's session.
@@ -951,12 +972,18 @@ class ClaudeChatCog(commands.Cog):
             interrupt_notice="-# ⚡ Interrupted by another session's message...",
         )
 
-    async def _enqueue_command(self, thread: discord.Thread, prompt: str) -> int:
+    async def _enqueue_command(
+        self,
+        thread: discord.Thread,
+        prompt: str,
+        *,
+        seed_message: discord.Message | None = None,
+    ) -> int:
         """Append one visible command to *thread* and return its FIFO position."""
-        display = f"📥 **Queued command:**\n{prompt}"
-        seed_message: discord.Message | None = None
-        for chunk in chunk_message(display) or [display]:
-            seed_message = await thread.send(chunk)
+        if seed_message is None:
+            display = f"📥 **Queued command:**\n{prompt}"
+            for chunk in chunk_message(display) or [display]:
+                seed_message = await thread.send(chunk)
         if seed_message is None:  # pragma: no cover - defensive; loop always runs
             raise RuntimeError("Queued command could not be posted")
 

@@ -167,6 +167,57 @@ class TestStopCommand:
 class TestQueueCommand:
     """Tests for stackable, non-interrupting queued prompts."""
 
+    @staticmethod
+    def _make_text_queue_message(content: str = "/queue after current") -> MagicMock:
+        """Return the raw message Discord emits when /queue is sent as text."""
+        thread = MagicMock(spec=discord.Thread)
+        thread.id = 12345
+        thread.parent_id = 999
+        thread.send = AsyncMock()
+
+        message = MagicMock(spec=discord.Message)
+        message.author = MagicMock()
+        message.author.bot = False
+        message.author.id = 123
+        message.type = discord.MessageType.default
+        message.channel = thread
+        message.content = content
+        message.attachments = []
+        return message
+
+    @pytest.mark.asyncio
+    async def test_text_queue_message_is_enqueued_without_interrupting(self) -> None:
+        """A raw ``/queue prompt`` message must not enter the interrupting reply path."""
+        cog = _make_cog()
+        message = self._make_text_queue_message("/queue   after current turn  ")
+        cog._enqueue_command = AsyncMock(return_value=2)
+        cog._handle_thread_reply = AsyncMock()
+
+        await cog.on_message(message)
+
+        cog._enqueue_command.assert_awaited_once_with(
+            message.channel,
+            "after current turn",
+            seed_message=message,
+        )
+        cog._handle_thread_reply.assert_not_awaited()
+        message.channel.send.assert_awaited_once()
+        assert "#2" in message.channel.send.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_empty_text_queue_message_shows_usage_without_interrupting(self) -> None:
+        cog = _make_cog()
+        message = self._make_text_queue_message(" /queue   ")
+        cog._enqueue_command = AsyncMock()
+        cog._handle_thread_reply = AsyncMock()
+
+        await cog.on_message(message)
+
+        cog._enqueue_command.assert_not_awaited()
+        cog._handle_thread_reply.assert_not_awaited()
+        message.channel.send.assert_awaited_once()
+        assert "instruction" in message.channel.send.call_args.args[0].lower()
+
     @pytest.mark.asyncio
     async def test_queue_outside_thread_sends_ephemeral_error(self) -> None:
         cog = _make_cog()
