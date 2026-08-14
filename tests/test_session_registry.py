@@ -120,12 +120,20 @@ class TestConcurrencyNotice:
         assert "task B" in notice
         assert "task C" in notice
 
-    def test_notice_mentions_git_worktree(self) -> None:
-        """The notice should advise git worktree usage."""
+    def test_notice_does_not_require_git_worktree(self) -> None:
+        """The notice should not force sessions into isolated worktrees."""
         registry = SessionRegistry()
         registry.register(1001, "my task")
         notice = registry.build_concurrency_notice(1001)
-        assert "worktree" in notice.lower()
+        assert "worktree" not in notice.lower()
+
+    def test_notice_with_others_coordinates_without_worktree(self) -> None:
+        registry = SessionRegistry()
+        registry.register(1001, "my task", "/home/ebi/repo")
+        registry.register(1002, "other task", "/home/ebi/repo")
+        notice = registry.build_concurrency_notice(1001).lower()
+        assert "coordinate any overlapping edits" in notice
+        assert "worktree" not in notice
 
     def test_notice_mentions_shared_resources(self) -> None:
         """The notice should warn about non-git conflicts too."""

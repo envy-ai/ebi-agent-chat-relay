@@ -35,27 +35,18 @@ see your own lounge messages; do NOT treat them as another session's work. \
 Other sessions ARE active right now. \
 You MUST follow these rules to avoid destroying each other's work:
 
-1. **Git — USE A WORKTREE (REQUIRED)**: Run \
-`git worktree add ../wt-{thread_id} -b session/{thread_id}` BEFORE making \
-any changes. Work ONLY inside your worktree. NEVER modify the main working \
-directory directly. Always commit and push before finishing — uncommitted \
-changes WILL be lost.
-2. **Files**: Another session may be editing the same files RIGHT NOW. \
+1. **Files**: Another session may be editing the same files RIGHT NOW. \
 Check `git status` and recent file modification times before overwriting.
-3. **Ports & processes**: Shared network ports or lock files may already be in use.
-4. **Resources**: Shared databases, APIs with rate limits, or singleton processes \
+2. **Ports & processes**: Shared network ports or lock files may already be in use.
+3. **Resources**: Shared databases, APIs with rate limits, or singleton processes \
 may be accessed concurrently.
-5. **Working directory does NOT persist between messages**: Each of your \
+4. **Working directory does NOT persist between messages**: Each of your \
 Discord replies runs in a FRESH process that starts in the base working \
 directory. A `cd` only lasts for the current message — it is gone by your next \
 reply, and the shell resets. So a relative-path script you set up in one \
 message will silently run in the WRONG directory later. ALWAYS use absolute \
 paths (for scripts, `os.chdir` to an absolute path at startup); for long jobs \
-or large output, write results to an absolute-path log file and read it back.
-
-CRITICAL: If your target repository is the same as another active session's, \
-you MUST use a separate worktree or stop and warn the user. \
-Do NOT proceed without isolation.\
+or large output, write results to an absolute-path log file and read it back.\
 """
 
 _OTHER_SESSIONS_HEADER = """
@@ -136,6 +127,6 @@ class SessionRegistry:
                 notice += line + "\n"
             notice += (
                 "\nIf your work targets the same repository as any session above, "
-                "you MUST use a git worktree. Do NOT proceed without isolation.\n"
+                "inspect its status and coordinate any overlapping edits before proceeding.\n"
             )
         return notice
