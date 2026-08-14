@@ -18,6 +18,7 @@ from claude_discord.cogs.prompt_builder import (
     MAX_TOTAL_BYTES,
     _convert_image_if_needed,
     build_prompt_and_images,
+    wants_file_attachment,
 )
 
 
@@ -688,3 +689,29 @@ class TestSaveAttachmentsToDisk:
             message_pos = prompt.find("analyze this")
             # ヘッダーがユーザーメッセージより先に出現する
             assert header_pos < message_pos
+
+
+class TestWantsFileAttachment:
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "Send me the report file",
+            "Attach the PDF",
+            "Please deliver the screenshot",
+            "レポートファイルを送ってください",
+        ],
+    )
+    def test_detects_output_file_delivery(self, prompt: str) -> None:
+        assert wants_file_attachment(prompt) is True
+
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "Give me an explanation",
+            "Download the dependencies",
+            "Write a reply draft",
+            "この問題を説明してください",
+        ],
+    )
+    def test_ignores_normal_text_or_input_downloads(self, prompt: str) -> None:
+        assert wants_file_attachment(prompt) is False

@@ -839,6 +839,9 @@ class TestMarkSessionsForResume:
         call_kwargs = resume_repo.mark.call_args.kwargs
         assert call_kwargs["session_id"] == "abc-123"
         assert call_kwargs["reason"] == "bot_upgrade"
+        from claude_discord.restart_resume import RESTART_RESUME_PROMPT
+
+        assert call_kwargs["resume_prompt"] == RESTART_RESUME_PROMPT
 
     @pytest.mark.asyncio
     async def test_mark_sessions_handles_mark_failure_gracefully(self) -> None:

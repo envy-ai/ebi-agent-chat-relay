@@ -1069,52 +1069,35 @@ class TestCogUnloadMarkForResume:
         assert resume_repo.mark.call_args.kwargs["session_id"] is None
 
     @pytest.mark.asyncio
-    async def test_resume_prompt_warns_against_auto_implementation(self) -> None:
-        """The default resume prompt must NOT instruct Claude to complete pending tasks.
-
-        After a bot restart, context compression may have erased the approval
-        status of planned tasks.  The prompt must ask Claude to *report* the
-        state first, not to auto-implement anything.
-        """
+    async def test_resume_prompt_is_short_continuation(self) -> None:
         cog, _, resume_repo = self._make_cog_with_resume_repo()
         cog._active_runners[666] = MagicMock()
 
         await cog.cog_unload()
 
+        from claude_discord.restart_resume import RESTART_RESUME_PROMPT
+
         prompt: str = resume_repo.mark.call_args.kwargs["resume_prompt"]
-        # Must NOT tell Claude to complete remaining work automatically.
-        assert "完了してください" not in prompt
-        assert "残作業" not in prompt
-        # Must ask Claude to report/confirm before acting.
-        assert any(word in prompt for word in ("報告", "確認", "confirm", "report"))
+        assert prompt == RESTART_RESUME_PROMPT
+        assert len(prompt) < 100
 
     @pytest.mark.asyncio
-    async def test_resume_prompt_mentions_context_compression_risk(self) -> None:
-        """The default resume prompt warns that context compression may have occurred."""
+    async def test_resume_prompt_does_not_force_reconfirmation(self) -> None:
         cog, _, resume_repo = self._make_cog_with_resume_repo()
         cog._active_runners[777] = MagicMock()
 
         await cog.cog_unload()
 
         prompt: str = resume_repo.mark.call_args.kwargs["resume_prompt"]
-        # The prompt should mention the risk of lost approval state.
-        assert any(
-            word in prompt for word in ("コンテキスト", "圧縮", "context", "compress", "承認")
-        )
+        assert "confirm" not in prompt.lower()
+        assert "authorization" not in prompt.lower()
 
 
 class TestOnReadyFallbackResumePrompt:
     """Tests for the fallback resume_prompt used when on_ready finds no stored prompt."""
 
     @pytest.mark.asyncio
-    async def test_fallback_prompt_warns_against_auto_implementation(self) -> None:
-        """The on_ready fallback prompt must not instruct Claude to auto-complete tasks.
-
-        When a PendingResume entry has no resume_prompt stored (e.g. from an
-        older bot version or /api/mark-resume without a prompt), on_ready uses
-        a hardcoded fallback.  That fallback must carry the same safety warning
-        as the cog_unload default.
-        """
+    async def test_fallback_prompt_uses_short_continuation(self) -> None:
         from unittest.mock import AsyncMock, MagicMock, patch
 
         import discord
@@ -1155,11 +1138,10 @@ class TestOnReadyFallbackResumePrompt:
 
         assert sent_prompts, "Expected at least one message to be sent to the thread"
         full_message = sent_prompts[0]
-        # Must NOT auto-instruct completion of pending tasks.
-        assert "完了してください" not in full_message
-        assert "残作業" not in full_message
-        # Must ask Claude to report/confirm first.
-        assert any(word in full_message for word in ("報告", "確認", "confirm", "report"))
+        from claude_discord.restart_resume import RESTART_RESUME_PROMPT
+
+        assert RESTART_RESUME_PROMPT in full_message
+        assert "confirm" not in full_message.lower()
 
 
 class TestOnMessageSystemMessageFilter:

@@ -33,6 +33,7 @@ async def test_system_context_is_built_without_a_discord_thread() -> None:
         runner=_runner(),
         prompt="scheduled work",
         registry=SessionRegistry(),
+        worktree_prompt_enabled=True,
     )
 
     context = await _build_system_context(config)
@@ -61,6 +62,7 @@ async def test_lounge_context_is_built_without_a_discord_thread() -> None:
         runner=_runner(),
         prompt="scheduled work",
         lounge_repo=lounge_repo,
+        lounge_prompt_enabled=True,
     )
 
     await _build_system_context(config)

@@ -1,8 +1,8 @@
 """Concurrency awareness for multiple simultaneous Claude Code sessions.
 
-Layer 1: Every session receives a generic concurrency warning in its prompt.
-Layer 2: An in-memory registry tracks active sessions so each one knows
-         what others are doing and can avoid conflicts.
+An in-memory registry tracks active sessions. Prompt guidance is emitted only
+when another session is actually active; optional worktree policy is built
+separately so deployments can opt into it without changing the default flow.
 
 See: https://github.com/ebibibi/ebi-agent-chat-relay/issues/52
 """
@@ -26,32 +26,20 @@ class ActiveSession:
     working_dir: str | None = None
 
 
-_BASE_CONCURRENCY_NOTICE = """\
-[CONCURRENCY NOTICE — MANDATORY] You are one of MULTIPLE Claude Code sessions \
-running simultaneously via Discord. Your thread ID is {thread_id}. \
-Messages marked [this thread] in the AI Lounge are YOUR earlier posts from \
-this same thread — not from other sessions. After context compaction you may \
-see your own lounge messages; do NOT treat them as another session's work. \
-Other sessions ARE active right now. \
-You MUST follow these rules to avoid destroying each other's work:
+_OTHER_SESSIONS_HEADER = "⚠️ Other active sessions (coordinate overlapping work):"
 
-1. **Files**: Another session may be editing the same files RIGHT NOW. \
-Check `git status` and recent file modification times before overwriting.
-2. **Ports & processes**: Shared network ports or lock files may already be in use.
-3. **Resources**: Shared databases, APIs with rate limits, or singleton processes \
-may be accessed concurrently.
-4. **Working directory does NOT persist between messages**: Each of your \
-Discord replies runs in a FRESH process that starts in the base working \
-directory. A `cd` only lasts for the current message — it is gone by your next \
-reply, and the shell resets. So a relative-path script you set up in one \
-message will silently run in the WRONG directory later. ALWAYS use absolute \
-paths (for scripts, `os.chdir` to an absolute path at startup); for long jobs \
-or large output, write results to an absolute-path log file and read it back.\
+_WORKTREE_NOTICE = """\
+[SESSION WORKTREE — REQUIRED]
+Before changing a Git repository, run \
+`git worktree add ../wt-{thread_id} -b session/{thread_id}` and work only in \
+that worktree. Do not modify the main working directory. Commit and push your \
+branch before finishing.\
 """
 
-_OTHER_SESSIONS_HEADER = """
-⚠️ ACTIVE SESSIONS RIGHT NOW (you MUST avoid conflicts with these):
-"""
+
+def build_worktree_notice(thread_id: int) -> str:
+    """Return the opt-in mandatory session-worktree policy."""
+    return _WORKTREE_NOTICE.format(thread_id=thread_id)
 
 
 class SessionRegistry:
@@ -111,22 +99,19 @@ class SessionRegistry:
             return [s for s in self._sessions.values() if s.thread_id != thread_id]
 
     def build_concurrency_notice(self, thread_id: int) -> str:
-        """Build the full concurrency notice for a session.
-
-        Combines the base Layer 1 warning with Layer 2 context about
-        other active sessions.
-        """
-        notice = _BASE_CONCURRENCY_NOTICE.format(thread_id=thread_id)
+        """Describe other active sessions, or return an empty string."""
         others = self.list_others(thread_id)
-        if others:
-            notice += _OTHER_SESSIONS_HEADER
-            for s in others:
-                line = f"- {s.description}"
-                if s.working_dir:
-                    line += f" (working in {s.working_dir})"
-                notice += line + "\n"
-            notice += (
-                "\nIf your work targets the same repository as any session above, "
-                "inspect its status and coordinate any overlapping edits before proceeding.\n"
-            )
-        return notice
+        if not others:
+            return ""
+
+        lines = [_OTHER_SESSIONS_HEADER]
+        for session in others:
+            line = f"- {session.description}"
+            if session.working_dir:
+                line += f" (working in {session.working_dir})"
+            lines.append(line)
+        lines.append(
+            "If your work overlaps one of these sessions, inspect its status and coordinate "
+            "before editing the same files or shared resources."
+        )
+        return "\n".join(lines)

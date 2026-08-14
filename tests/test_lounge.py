@@ -495,7 +495,7 @@ class TestLoungeApiEndpoints:
 
 
 class TestRunHelperLoungeInjection:
-    """Verify that lounge context is injected as --append-system-prompt when lounge_repo is set."""
+    """Verify opt-in Lounge context injection through --append-system-prompt."""
 
     @pytest.mark.real_system_context
     async def test_lounge_context_injected_as_system_prompt(self) -> None:
@@ -505,7 +505,8 @@ class TestRunHelperLoungeInjection:
         Injecting it via --append-system-prompt (system prompt) prevents the "Prompt is too
         long" error that would otherwise occur in long-running sessions.
         """
-        from claude_discord.cogs._run_helper import run_claude_in_thread
+        from claude_discord.cogs._run_helper import run_claude_with_config
+        from claude_discord.cogs.run_config import RunConfig
 
         lounge_repo_mock = AsyncMock(spec=LoungeRepository)
         lounge_repo_mock.get_recent.return_value = [
@@ -535,13 +536,16 @@ class TestRunHelperLoungeInjection:
         runner.clone.return_value = runner
         runner.run = fake_run
 
-        await run_claude_in_thread(
-            thread=thread,
-            runner=runner,
-            repo=None,
-            prompt="Do something cool",
-            session_id=None,
-            lounge_repo=lounge_repo_mock,
+        await run_claude_with_config(
+            RunConfig(
+                thread=thread,
+                runner=runner,
+                repo=None,
+                prompt="Do something cool",
+                session_id=None,
+                lounge_repo=lounge_repo_mock,
+                lounge_prompt_enabled=True,
+            )
         )
 
         assert captured_prompt, "runner.run was not called"
@@ -554,6 +558,38 @@ class TestRunHelperLoungeInjection:
         system_prompt = kwargs.get("append_system_prompt", "")
         assert "BotX" in system_prompt
         assert "Busy here!" in system_prompt
+
+    @pytest.mark.real_system_context
+    async def test_lounge_repo_does_not_inject_when_policy_is_disabled(self) -> None:
+        from claude_discord.cogs._run_helper import run_claude_with_config
+        from claude_discord.cogs.run_config import RunConfig
+
+        lounge_repo_mock = AsyncMock(spec=LoungeRepository)
+        runner = MagicMock()
+        runner.working_dir = None
+
+        async def fake_run(prompt: str, session_id: str | None):
+            from claude_discord.claude.types import MessageType, StreamEvent
+
+            yield StreamEvent(message_type=MessageType.RESULT, is_complete=True)
+
+        runner.run = fake_run
+        thread = MagicMock()
+        thread.id = 42
+        thread.send = AsyncMock(return_value=MagicMock())
+
+        await run_claude_with_config(
+            RunConfig(
+                thread=thread,
+                runner=runner,
+                prompt="normal turn",
+                lounge_repo=lounge_repo_mock,
+                lounge_prompt_enabled=False,
+            )
+        )
+
+        lounge_repo_mock.get_recent.assert_not_awaited()
+        runner.clone.assert_not_called()
 
     @pytest.mark.real_system_context
     async def test_no_lounge_context_when_repo_is_none(self) -> None:
@@ -592,7 +628,4 @@ class TestRunHelperLoungeInjection:
 
         assert captured_prompt
         assert captured_prompt[0] == user_prompt
-        # clone is called (File Delivery always injected), but no lounge context
-        if runner.clone.called:
-            system_prompt = runner.clone.call_args[1].get("append_system_prompt", "")
-            assert "AI Lounge" not in system_prompt
+        runner.clone.assert_not_called()

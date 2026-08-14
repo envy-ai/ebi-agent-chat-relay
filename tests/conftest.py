@@ -29,8 +29,8 @@ def thread() -> MagicMock:
 def runner() -> MagicMock:
     """A MagicMock ClaudeRunner with interrupt() wired up.
 
-    clone() returns the same mock so tests that set runner.run = ...
-    keep working after _build_system_context triggers runner.clone().
+    clone() returns the same mock so tests that intentionally enable dynamic
+    system context keep working after _build_system_context triggers a clone.
     """
     r = MagicMock()
     r.interrupt = AsyncMock()
@@ -53,9 +53,8 @@ def _patch_build_system_context(
 ) -> None:
     """Patch _build_system_context to return None by default.
 
-    The always-on File Delivery injection causes runner.clone() on every run,
-    which breaks tests using runner.run = async_gen on a plain MagicMock.
-    Tests that need real system context should use @pytest.mark.real_system_context.
+    Most unit tests target orchestration unrelated to prompt policy. Tests that
+    exercise real conditional system context use @pytest.mark.real_system_context.
     """
     if "real_system_context" in {m.name for m in request.node.iter_markers()}:
         return

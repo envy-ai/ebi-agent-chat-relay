@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -59,3 +59,29 @@ class TestRunConfigValidation:
         updated = original.with_prompt("new prompt")
         assert updated.prompt == "new prompt"
         assert updated.images == [_SAMPLE_IMAGE]
+
+
+class TestPromptPolicyDefaults:
+    def test_optional_prompt_policies_default_off(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            config = _make_config()
+
+        assert config.lounge_prompt_enabled is False
+        assert config.post_compact_guardrail_enabled is False
+        assert config.worktree_prompt_enabled is False
+
+    def test_optional_prompt_policies_can_be_enabled_from_env(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "CCDB_LOUNGE_PROMPT_ENABLED": "true",
+                "CCDB_POST_COMPACT_GUARDRAIL_ENABLED": "1",
+                "CCDB_WORKTREE_PROMPT_ENABLED": "yes",
+            },
+            clear=True,
+        ):
+            config = _make_config()
+
+        assert config.lounge_prompt_enabled is True
+        assert config.post_compact_guardrail_enabled is True
+        assert config.worktree_prompt_enabled is True

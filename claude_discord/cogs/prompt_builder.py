@@ -185,19 +185,37 @@ def _convert_image_if_needed(raw: bytes, media_type: str) -> tuple[bytes, str]:
         return raw, "image/png"
 
 
-# Keywords that indicate the user wants a file sent/attached.
-_SEND_FILE_KEYWORDS = (
-    "送って",
-    "ちょうだい",
-    "添付して",
-    "くれ",
-    "送ってください",
-    "ください",
+# Terms that jointly indicate an output-file delivery request. Broad phrases
+# such as "give me" or "download" caused normal text turns to receive Discord
+# attachment instructions, so require both a delivery verb and an artifact noun.
+_FILE_DELIVERY_VERBS = (
     "attach",
-    "send me",
-    "send the file",
+    "send",
+    "deliver",
+    "upload",
     "give me",
-    "download",
+    "添付",
+    "送って",
+    "送信",
+)
+_FILE_ARTIFACT_NOUNS = (
+    "file",
+    "attachment",
+    "report",
+    "document",
+    "markdown",
+    "pdf",
+    "csv",
+    "json",
+    "archive",
+    "zip",
+    "image",
+    "screenshot",
+    "ファイル",
+    "添付",
+    "レポート",
+    "文書",
+    "画像",
 )
 
 
@@ -209,7 +227,9 @@ def wants_file_attachment(prompt: str) -> bool:
     and the bot attaches them when the session completes.
     """
     lower = prompt.lower()
-    return any(kw in lower for kw in _SEND_FILE_KEYWORDS)
+    return any(verb in lower for verb in _FILE_DELIVERY_VERBS) and any(
+        noun in lower for noun in _FILE_ARTIFACT_NOUNS
+    )
 
 
 def _unique_path(directory: str, filename: str) -> str:

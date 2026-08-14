@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from claude_discord.concurrency import ActiveSession, SessionRegistry
+from claude_discord.concurrency import ActiveSession, SessionRegistry, build_worktree_notice
 
 
 class TestSessionRegistry:
@@ -95,13 +95,10 @@ class TestActiveSession:
 class TestConcurrencyNotice:
     """Tests for building the concurrency context string."""
 
-    def test_no_others_returns_base_notice_only(self) -> None:
+    def test_no_others_returns_no_prompt_guidance(self) -> None:
         registry = SessionRegistry()
         registry.register(1001, "my task")
-        notice = registry.build_concurrency_notice(1001)
-        assert "concurrency notice" in notice.lower()
-        # Should NOT list specific other sessions
-        assert "ACTIVE SESSIONS RIGHT NOW" not in notice
+        assert registry.build_concurrency_notice(1001) == ""
 
     def test_with_others_includes_session_info(self) -> None:
         registry = SessionRegistry()
@@ -132,48 +129,19 @@ class TestConcurrencyNotice:
         registry.register(1001, "my task", "/home/ebi/repo")
         registry.register(1002, "other task", "/home/ebi/repo")
         notice = registry.build_concurrency_notice(1001).lower()
-        assert "coordinate any overlapping edits" in notice
+        assert "coordinate" in notice
         assert "worktree" not in notice
 
-    def test_notice_mentions_shared_resources(self) -> None:
-        """The notice should warn about non-git conflicts too."""
+    def test_notice_mentions_shared_resources_only_when_others_exist(self) -> None:
         registry = SessionRegistry()
         registry.register(1001, "my task")
-        notice = registry.build_concurrency_notice(1001)
-        # Should mention files, ports, or processes
-        assert any(word in notice.lower() for word in ["file", "port", "process", "resource"])
-
-    def test_notice_includes_own_thread_id(self) -> None:
-        """The notice should identify the current session's thread ID.
-
-        After context compaction the AI loses awareness of its own identity.
-        The concurrency notice must explicitly state the thread ID so the AI
-        can distinguish its own earlier lounge posts from other sessions'.
-        """
-        registry = SessionRegistry()
-        registry.register(1001, "my task")
-        notice = registry.build_concurrency_notice(1001)
-        assert "1001" in notice
-        assert "thread" in notice.lower()
-
-    def test_notice_includes_this_thread_guidance(self) -> None:
-        """The notice should explain that [this thread] markers are self-posts."""
-        registry = SessionRegistry()
-        registry.register(1001, "my task")
-        notice = registry.build_concurrency_notice(1001)
-        assert "[this thread]" in notice
-
-    def test_notice_warns_cwd_not_persistent_across_messages(self) -> None:
-        """Each Discord message spawns a fresh subprocess, so the shell's
-        working directory does NOT survive between turns.
-
-        Agents that ``cd`` in one message and run a relative-path script in a
-        later message silently execute in the wrong directory. The notice must
-        warn about this and tell agents to use absolute paths.
-        """
-        registry = SessionRegistry()
-        registry.register(1001, "my task")
+        registry.register(1002, "other task")
         notice = registry.build_concurrency_notice(1001).lower()
-        # Warns that cwd / working directory is not preserved between messages
-        assert "cwd" in notice or "working directory" in notice
-        assert "absolute path" in notice
+        assert "files" in notice
+        assert "shared resources" in notice
+
+    def test_worktree_notice_is_separate_and_explicit(self) -> None:
+        notice = build_worktree_notice(1001).lower()
+        assert "worktree add ../wt-1001 -b session/1001" in notice
+        assert "required" in notice
+        assert "main working directory" in notice

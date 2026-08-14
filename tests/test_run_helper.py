@@ -762,9 +762,8 @@ class TestStopViewRunnerSync:
     async def test_stop_view_updated_to_cloned_runner(self, thread: MagicMock) -> None:
         """stop_view.update_runner() is called when a clone is created for system context.
 
-        When registry/lounge is configured, _run_helper calls runner.clone() and
-        the resulting clone is the one that runs the subprocess.  The StopView
-        must be redirected to that clone so the Stop button actually works.
+        A requested file attachment creates system context; the resulting clone
+        owns the subprocess, so StopView must be redirected to it.
         """
         original_runner = MagicMock()
         original_runner.working_dir = None
@@ -789,6 +788,7 @@ class TestStopViewRunnerSync:
             prompt="hello",
             stop_view=stop_view,
             registry=registry,
+            attach_on_request=True,
         )
 
         await run_claude_with_config(config)
@@ -889,14 +889,10 @@ class TestConcurrencyIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.real_system_context
-    async def test_concurrency_notice_injected_as_system_prompt(
+    async def test_no_concurrency_prompt_when_session_is_alone(
         self, thread: MagicMock, runner: MagicMock, repo: MagicMock
     ) -> None:
-        """When registry is provided, concurrency notice goes into --append-system-prompt.
-
-        The user prompt is passed unchanged; the notice is injected as an ephemeral
-        system prompt so it does NOT accumulate in session history.
-        """
+        """Registry tracking alone should not add system-prompt text."""
         registry = SessionRegistry()
         captured_prompt = []
 
@@ -909,19 +905,13 @@ class TestConcurrencyIntegration:
 
         await run_claude_in_thread(thread, runner, repo, "fix the bug", None, registry=registry)
 
-        # Prompt is unchanged — notice moved to --append-system-prompt via clone().
         assert len(captured_prompt) == 1
         assert captured_prompt[0] == "fix the bug"
-
-        # clone() must have been called with the concurrency notice as system prompt.
-        runner.clone.assert_called_once()
-        _, kwargs = runner.clone.call_args
-        system_prompt = kwargs.get("append_system_prompt", "")
-        assert "[CONCURRENCY NOTICE" in system_prompt
+        runner.clone.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.real_system_context
-    async def test_file_delivery_mentions_substantial_written_deliverables(
+    async def test_file_delivery_injected_only_for_requested_attachment(
         self, thread: MagicMock, runner: MagicMock, repo: MagicMock
     ) -> None:
         captured_prompt = []
@@ -933,13 +923,55 @@ class TestConcurrencyIntegration:
 
         runner.run = capturing_gen
 
-        await run_claude_in_thread(thread, runner, repo, "write a reply draft", None)
+        await run_claude_with_config(
+            RunConfig(
+                thread=thread,
+                runner=runner,
+                repo=repo,
+                prompt="send me the report file",
+                attach_on_request=True,
+            )
+        )
 
-        assert captured_prompt == ["write a reply draft"]
+        assert captured_prompt == ["send me the report file"]
         runner.clone.assert_called_once()
         system_prompt = runner.clone.call_args.kwargs.get("append_system_prompt", "")
-        assert "substantial written deliverable" in system_prompt
-        assert "Markdown file" in system_prompt
+        assert "File Delivery" in system_prompt
+        assert ".ccdb-attachments-12345" in system_prompt
+        assert "substantial written deliverable" not in system_prompt
+
+    @pytest.mark.asyncio
+    @pytest.mark.real_system_context
+    async def test_file_delivery_not_injected_for_normal_text(
+        self, thread: MagicMock, runner: MagicMock, repo: MagicMock
+    ) -> None:
+        runner.run = self._make_async_gen(self._simple_events())
+
+        await run_claude_with_config(
+            RunConfig(thread=thread, runner=runner, repo=repo, prompt="write a reply draft")
+        )
+
+        runner.clone.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.real_system_context
+    async def test_opt_in_worktree_prompt(
+        self, thread: MagicMock, runner: MagicMock, repo: MagicMock
+    ) -> None:
+        runner.run = self._make_async_gen(self._simple_events())
+
+        await run_claude_with_config(
+            RunConfig(
+                thread=thread,
+                runner=runner,
+                repo=repo,
+                prompt="fix the bug",
+                worktree_prompt_enabled=True,
+            )
+        )
+
+        system_prompt = runner.clone.call_args.kwargs.get("append_system_prompt", "")
+        assert "worktree add ../wt-12345 -b session/12345" in system_prompt
 
     @pytest.mark.asyncio
     @pytest.mark.real_system_context
@@ -1244,11 +1276,11 @@ class TestImageOnlyRunConfig:
 
 
 class TestCompactRerun:
-    """compact_boundary → interrupt → rerun-with-guardrail integration tests.
+    """compact_boundary → interrupt → rerun integration tests.
 
     When compact_boundary fires, EventProcessor interrupts the runner and sets
-    compact_occurred=True. run_claude_with_config should then rerun with a
-    guardrail injected into --append-system-prompt and post_compact_rerun=True.
+    compact_occurred=True. run_claude_with_config then reruns the session;
+    guardrail text is an independent opt-in policy.
     """
 
     @pytest.fixture
@@ -1307,6 +1339,7 @@ class TestCompactRerun:
 
         assert call_count == 2, f"Expected 2 runner.run calls, got {call_count}"
         assert session_id == "sess-1"
+        runner.clone.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.real_system_context
@@ -1351,7 +1384,13 @@ class TestCompactRerun:
         runner.run = mock_run
         runner.clone = MagicMock(return_value=cloned_runner)
 
-        config = RunConfig(thread=thread, runner=runner, prompt="check X", session_id="sess-2")
+        config = RunConfig(
+            thread=thread,
+            runner=runner,
+            prompt="check X",
+            session_id="sess-2",
+            post_compact_guardrail_enabled=True,
+        )
         await run_claude_with_config(config)
 
         # runner.clone() must have been called for the rerun (guardrail injection).

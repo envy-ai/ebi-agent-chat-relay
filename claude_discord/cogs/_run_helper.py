@@ -2,7 +2,7 @@
 
 Both ClaudeChatCog and SkillCommandCog need to run Claude and post results.
 This module is the thin orchestration layer that:
-1. Builds ephemeral system context (lounge + concurrency notice) via --append-system-prompt
+1. Builds optional/conditional system context via --append-system-prompt
 2. Delegates event processing to EventProcessor
 3. Handles AskUserQuestion flow (recursive resume)
 
@@ -25,6 +25,7 @@ import discord
 
 from claude_code_core.frontend import Notice, NoticeLevel
 
+from ..concurrency import build_worktree_notice
 from ..discord_ui.ask_handler import collect_ask_answers
 from ..discord_ui.embeds import error_embed, timeout_embed
 from ..lounge import build_lounge_prompt
@@ -127,7 +128,7 @@ def _truncate_result(content: str) -> str:
 
 
 async def _build_system_context(config: RunConfig) -> str | None:
-    """Build ephemeral system context from AI Lounge and concurrency notice.
+    """Build only the ephemeral system context needed for this run.
 
     Returns a string to inject as backend-specific developer/system instructions, or
     None if no context is available. Keeping it separate from the user message prevents
@@ -136,8 +137,8 @@ async def _build_system_context(config: RunConfig) -> str | None:
     """
     parts: list[str] = []
 
-    # Layer 3: AI Lounge context (recent messages + invitation).
-    if config.lounge_repo is not None:
+    # Optional AI Lounge context (recent messages + invitation).
+    if config.lounge_prompt_enabled and config.lounge_repo is not None:
         try:
             recent = await config.lounge_repo.get_recent(limit=10)
             lounge_context = build_lounge_prompt(
@@ -148,48 +149,50 @@ async def _build_system_context(config: RunConfig) -> str | None:
         except Exception:
             logger.warning("Failed to fetch lounge context — skipping", exc_info=True)
 
-    # Layer 1 + 2: Register session and build concurrency notice.
+    # Register every live session, but inject guidance only when another
+    # session is actually active.
     if config.registry is not None:
         config.registry.register(
             config.surface.thread_key, config.prompt[:100], config.runner.working_dir
         )
         others = config.registry.list_others(config.surface.thread_key)
         notice = config.registry.build_concurrency_notice(config.surface.thread_key)
-        parts.append(notice)
-        logger.info(
-            "Concurrency notice built for thread %d (%d other active session(s), dir=%s)",
-            config.surface.thread_key,
-            len(others),
-            config.runner.working_dir or "(default)",
-        )
+        if notice:
+            parts.append(notice)
+            logger.info(
+                "Concurrency notice built for thread %d (%d other active session(s), dir=%s)",
+                config.surface.thread_key,
+                len(others),
+                config.runner.working_dir or "(default)",
+            )
     else:
         logger.debug(
             "No session registry — concurrency notice skipped for thread %d",
             config.surface.thread_key,
         )
 
-    # File delivery marker: always injected so Claude knows the per-thread
-    # marker name, even when it discovers the mechanism from session history
-    # or CLAUDE.md rather than from an explicit "send me the file" request.
-    from .event_processor import _attachment_marker_name
+    # Optional mandatory worktree policy. Kept separate from collision context
+    # because some deployments want it for every session, even when working alone.
+    if config.worktree_prompt_enabled:
+        parts.append(build_worktree_notice(config.surface.thread_key))
 
-    wd = config.runner.working_dir or "your current working directory"
-    marker = _attachment_marker_name(config.surface.thread_key)
-    parts.append(
-        "## File Delivery\n"
-        "When you need to send files to Discord, use your Bash tool to append "
-        "each file's ABSOLUTE path (one path per line, UTF-8) to:\n"
-        f"  {wd}/{marker}\n"
-        f"Example: `echo /absolute/path/to/file >> {wd}/{marker}`\n"
-        "The bot will attach those files when this session ends.\n"
-        "When local instructions require Discord attachment for a substantial "
-        "written deliverable, save the final text as a Markdown file and append "
-        "that file path here. Otherwise, only include files the user explicitly "
-        "asked to receive."
-    )
+    # File delivery guidance is needed only when the user's prompt requested an
+    # attachment. Normal text turns receive no Discord-specific file policy.
+    if config.attach_on_request:
+        from .event_processor import _attachment_marker_name
+
+        wd = config.runner.working_dir or "your current working directory"
+        marker = _attachment_marker_name(config.surface.thread_key)
+        parts.append(
+            "## File Delivery\n"
+            "To attach a requested file to Discord, append each file's absolute path "
+            "(one UTF-8 path per line) to:\n"
+            f"  {wd}/{marker}\n"
+            "The bot will attach those files when this session ends."
+        )
 
     # Post-compact guardrail: prevent auto-execution of "pending tasks" from summary.
-    if config.post_compact_rerun:
+    if config.post_compact_rerun and config.post_compact_guardrail_enabled:
         parts.append(_POST_COMPACT_GUARDRAIL)
         logger.info("Post-compact guardrail injected for thread %d", config.surface.thread_key)
 

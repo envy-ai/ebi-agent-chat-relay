@@ -215,7 +215,7 @@ class EventProcessor:
         self._pending_wakeup: dict | None = None
 
         # Set when compact_boundary fires (and post_compact_rerun is False).
-        # Triggers interrupt → rerun-with-guardrail in _run_helper.
+        # Triggers interrupt → rerun in _run_helper; guardrail text is optional.
         self._compact_occurred: bool = False
 
         # Per-turn usage from the last assistant message. The RESULT message
@@ -371,8 +371,8 @@ class EventProcessor:
                     label += f" \u2014 was {pre:,} tokens"
                 await self._config.surface.send_notice(Notice(level=NoticeLevel.SUBTLE, body=label))
 
-            # Interrupt the runner so _run_helper can rerun with a guardrail.
-            # Skip when post_compact_rerun=True (guardrail already active; avoid loops).
+            # Interrupt the runner so _run_helper can resume after compaction.
+            # Skip when post_compact_rerun=True to avoid rerun loops.
             if not self._config.post_compact_rerun:
                 self._compact_occurred = True
                 await self._config.runner.interrupt()

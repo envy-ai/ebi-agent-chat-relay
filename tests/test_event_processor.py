@@ -806,7 +806,7 @@ class TestCompactHandling:
     async def test_compact_does_not_interrupt_on_post_compact_rerun(
         self, thread: MagicMock, runner: MagicMock
     ) -> None:
-        """When post_compact_rerun=True, we already added the guardrail — don't interrupt again."""
+        """A post-compaction rerun must not interrupt and recurse again."""
         runner.interrupt = AsyncMock()
         thread.send = AsyncMock(return_value=MagicMock(embeds=[]))
         config = _make_config(thread, runner, post_compact_rerun=True)

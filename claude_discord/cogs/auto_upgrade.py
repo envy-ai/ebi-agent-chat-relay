@@ -23,6 +23,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..protocols import DrainAware
+from ..restart_resume import RESTART_RESUME_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -387,14 +388,7 @@ class AutoUpgradeCog(commands.Cog):
                     tid,
                     session_id=session_id,
                     reason="bot_upgrade",
-                    resume_prompt=(
-                        "The bot restarted after a package upgrade. "
-                        "Please report what you were working on before resuming. "
-                        "⚠️ Context may have been compressed, which means the approval status of "
-                        "planned tasks could be lost. "
-                        "Before making any code changes, commits, or PRs, "
-                        "re-confirm with the user that they want you to proceed."
-                    ),
+                    resume_prompt=RESTART_RESUME_PROMPT,
                 )
                 marked += 1
             except Exception:

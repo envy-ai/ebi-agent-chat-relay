@@ -8,7 +8,7 @@ file.
 
 Delivery is deliberately cheap:
 
-* a line in the **AI Lounge**, which is injected into every session's next turn
+* a line in the **AI Lounge**, visible in later turns when Lounge prompts are enabled
   at no token cost and with no interruption, and
 * a message in **each colliding thread**, so the human watching sees it now.
 

@@ -8,8 +8,9 @@ added without changing every caller).
 
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import discord
@@ -34,6 +35,11 @@ if TYPE_CHECKING:
     from ..worktree import WorktreeManager
 
 
+def _env_enabled(name: str) -> bool:
+    """Return True only for an explicit truthy environment value."""
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass
 class RunConfig:
     """All parameters needed for a single Claude Code execution.
@@ -55,11 +61,16 @@ class RunConfig:
                   notice is prepended to the prompt.
         ask_repo: Repository for persisting AskUserQuestion state across restarts.
         lounge_repo: Repository for AI Lounge context injection.
+                     Injection also requires lounge_prompt_enabled=True.
         stop_view: StopView instance to bump after each major message, keeping
                    the Stop button at the bottom of the thread.
         worktree_manager: WorktreeManager for automatic session worktree cleanup.
                           When provided, the worktree for this thread is removed
                           (if clean) after the session ends.
+        lounge_prompt_enabled: Inject the Lounge manual and recent messages.
+        post_compact_guardrail_enabled: Add authorization guidance to the
+                                        automatic post-compaction rerun.
+        worktree_prompt_enabled: Require a per-thread Git worktree in the prompt.
     """
 
     runner: SessionBackend
@@ -82,6 +93,17 @@ class RunConfig:
     # When True, inject a system-prompt instruction telling Claude to write
     # requested file paths to .ccdb-attachments so the bot can send them.
     attach_on_request: bool = False
+    # Optional prompt policies. All default off so Discord follows the native
+    # CLI workflow unless a deployment deliberately enables extra guidance.
+    lounge_prompt_enabled: bool = field(
+        default_factory=lambda: _env_enabled("CCDB_LOUNGE_PROMPT_ENABLED")
+    )
+    post_compact_guardrail_enabled: bool = field(
+        default_factory=lambda: _env_enabled("CCDB_POST_COMPACT_GUARDRAIL_ENABLED")
+    )
+    worktree_prompt_enabled: bool = field(
+        default_factory=lambda: _env_enabled("CCDB_WORKTREE_PROMPT_ENABLED")
+    )
     # Thread inbox — when set, classifies the session's final message after
     # completion and persists the result so the dashboard can surface threads
     # that need the user's attention across bot restarts.

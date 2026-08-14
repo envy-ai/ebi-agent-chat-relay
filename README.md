@@ -126,9 +126,9 @@ Already use Claude Code CLI directly? Sync your existing terminal sessions into 
 
 ### AI Lounge
 
-A shared "breakroom" channel where all concurrent sessions announce themselves, read each other's updates, and coordinate before disruptive operations.
+A shared "breakroom" where concurrent sessions can announce themselves, read each other's updates, and coordinate before disruptive operations. It is optional and disabled in agent prompts by default.
 
-Each session receives the lounge context automatically as ephemeral system/developer instructions (`--append-system-prompt` for Claude, `developer_instructions` for Codex), rather than as part of the conversation history. This prevents the context from accumulating across turns, which would otherwise cause "Prompt is too long" errors in long-running sessions. The injected context includes recent messages from other sessions plus the rule to check before doing anything destructive.
+Set `CCDB_LOUNGE_PROMPT_ENABLED=true` to inject the Lounge manual and recent messages as ephemeral system/developer instructions (`--append-system-prompt` for Claude, `developer_instructions` for Codex). Leaving it unset preserves the underlying CLI prompt. When enabled, ephemeral injection prevents Lounge context from accumulating in conversation history.
 
 ```bash
 # Sessions post their intentions before starting:
@@ -136,15 +136,15 @@ curl -X POST "$CCDB_API_URL/api/lounge" \
   -H "Content-Type: application/json" \
   -d '{"message": "Starting auth refactor on feature/oauth — worktree-A", "label": "feature dev"}'
 
-# Read recent lounge messages (also injected into each session automatically):
+# Read recent lounge messages (injected only when the prompt policy is enabled):
 curl "$CCDB_API_URL/api/lounge"
 ```
 
-The lounge channel doubles as a human-visible activity feed — open it in Discord to see at a glance what every active Claude session is currently doing.
+When a mirror channel is configured, it becomes a human-visible activity feed in Discord.
 
 **Lounge vs. the coordination APIs.** Since the cross-session endpoints below landed, the lounge is no longer the place to *discover* who is running, read another thread, or lock a resource — `GET /api/sessions`, `GET /api/threads/{id}/messages` and `POST /api/claims` do that precisely and even surface sessions that never posted. The lounge keeps what no structured call carries: **broadcast announcements with no single target** ("restarting the bot", "cut release v3.2.0") and **intent announced before acting**. Treat it as the room's announcements, not its database.
 
-**The Discord mirror is optional (on/off).** The AI-to-AI layer is the DB-backed lounge that is injected into every session's prompt; mirroring it into a Discord channel is a separate, purely human-facing convenience. It is controlled by one setting:
+**The Discord mirror is optional (on/off).** The AI-to-AI layer is the DB-backed Lounge; prompt injection and mirroring it into a Discord channel are separate options.
 
 - **On** — set `COORDINATION_CHANNEL_ID` (or `lounge_channel_id`) to a channel, and lounge messages are echoed there for a human to watch.
 - **Off** — leave it unset. The lounge and every coordination API keep working exactly the same; you simply don't get the Discord feed. If the configured channel is later deleted, the mirror notices and disables itself for the rest of the process (the DB lounge is never affected).
@@ -186,7 +186,7 @@ curl -X DELETE "$CCDB_API_URL/api/claims?resource=repo:ccdb%23issue-123&thread_i
 
 Claims are **advisory** — nothing enforces them at the git or filesystem level — and every claim carries a TTL (default 2h, max 24h) so a session that dies cannot pin a resource forever. The 409 body reports whether the holder is still running, which is how a caller decides whether to wait, work on something else, or take over with `force=true`. Resource names are free-form and normalized (case and whitespace), so `repo:ccdb` and `Repo: CCDB` are the same claim.
 
-The lounge prompt tells every session to claim before starting and to release when finished.
+When Lounge prompt injection is enabled, its manual tells sessions to claim before starting and release when finished.
 
 ### Session-to-Session Relay
 
@@ -875,6 +875,9 @@ In chat-only mode, permission requests and `AskUserQuestion` prompts are **alway
 | `CCDB_PR_COMPLETION_OWNER` | GitHub owner whose non-draft `session/<thread_id>` PRs trigger one automatic completion continuation. Requires authenticated `gh`; disabled when empty. | (optional) |
 | `DISCORD_OWNER_ID` | User ID to @-mention when an agent needs input | (optional) |
 | `CCDB_WAITING_INPUT_MESSAGE` | Full message posted when an agent needs input. Use `{owner_id}` for the configured owner's Discord mention. | `🟡 <@{owner_id}> Codex has finished — your reply is needed here.` |
+| `CCDB_LOUNGE_PROMPT_ENABLED` | Inject the AI Lounge manual and recent Lounge messages into each agent turn | `false` |
+| `CCDB_POST_COMPACT_GUARDRAIL_ENABLED` | Inject the authorization guardrail during the automatic post-compaction rerun | `false` |
+| `CCDB_WORKTREE_PROMPT_ENABLED` | Require each agent session to create and use a per-thread Git worktree | `false` |
 | `COORDINATION_CHANNEL_ID` | Channel ID used as default fallback for AI Lounge channel | (optional) |
 | `CCDB_MENTION_ANYWHERE` | When true, an @mention summons Claude in any guild channel or thread; set `false` to listen only in the configured channels | `true` |
 | `CCDB_THREAD_CONTEXT_DAYS` | Days of the surrounding channel or thread's history prepended to the prompt when a mention wakes Claude there (`0` disables) | `7` |

@@ -44,6 +44,7 @@ from ..discord_ui.thread_context import DEFAULT_DAYS, build_recent_transcript
 from ..discord_ui.thread_dashboard import ThreadState, ThreadStatusDashboard
 from ..discord_ui.thread_renamer import suggest_title
 from ..discord_ui.views import RewindSelectView, StopView
+from ..restart_resume import RESTART_RESUME_PROMPT
 from ._run_helper import run_claude_with_config
 from .prompt_builder import build_prompt_and_images, wants_file_attachment
 from .run_config import RunConfig
@@ -1097,14 +1098,7 @@ class ClaudeChatCog(commands.Cog):
                     thread_id,
                     session_id=session_id,
                     reason="bot_shutdown",
-                    resume_prompt=(
-                        "The bot restarted. "
-                        "Please report what you were working on before resuming. "
-                        "⚠️ Context may have been compressed, which means the approval status of "
-                        "planned tasks could be lost. "
-                        "Before making any code changes, commits, or PRs, "
-                        "re-confirm with the user that they want you to proceed."
-                    ),
+                    resume_prompt=RESTART_RESUME_PROMPT,
                 )
                 logger.info(
                     "Marked thread %d for restart-resume (session=%s)", thread_id, session_id
@@ -1166,14 +1160,7 @@ class ClaudeChatCog(commands.Cog):
                 )
                 continue
 
-            resume_prompt = entry.resume_prompt or (
-                "The bot restarted. "
-                "Please report what you were working on before resuming. "
-                "⚠️ Context may have been compressed, which means the approval status of "
-                "planned tasks could be lost. "
-                "Before making any code changes, commits, or PRs, "
-                "re-confirm with the user that they want you to proceed."
-            )
+            resume_prompt = entry.resume_prompt or RESTART_RESUME_PROMPT
 
             logger.info(
                 "Resuming session in thread %d (session_id=%s, reason=%s)",

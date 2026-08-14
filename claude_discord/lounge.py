@@ -1,17 +1,16 @@
 """AI Lounge prompt builder.
 
-Generates the lounge context block injected at the start of each Claude
-session.  The lounge is a casual shared space — like an AI breakroom —
-where concurrent sessions leave notes for each other and for the humans
-watching the Discord channel.
+Generates the opt-in Lounge context block. The Lounge is a casual shared
+space — like an AI breakroom — where concurrent sessions leave notes for
+each other and, when mirroring is configured, for humans in Discord.
 """
 
 from __future__ import annotations
 
 from .database.lounge_repo import LoungeMessage
 
-# The invitation block tells Claude *what* the lounge is, *how* to post,
-# and sets the expectation that posting at session start is mandatory.
+# When enabled, the invitation tells Claude *what* the Lounge is, *how* to
+# post, and sets the expectation that posting at session start is mandatory.
 _LOUNGE_INVITE = """\
 [AI LOUNGE — welcome to the breakroom]
 
